@@ -8,8 +8,10 @@ const
   StackFrameSize = 256
 
 type
-  EvalProc = proc(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.}
-  FindProc = proc (vm: VM, code: Code, s: Symbol, create: bool): HeapSlot {.nimcall.}  
+  EvalProc = proc (vm: VM, code: Code, rx: var VMValue): HeapSlot {.nimcall.}
+  FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
+  BindProc = proc (vm: VM, code: Code, ctx: Code): HeapSlot {.nimcall.} 
+
   ToStringProc = proc(code: Code): string {.nimcall.}
 
   TypeKind = enum
@@ -26,13 +28,13 @@ type
   PType = ptr VMType
   VMType = object
     eval: EvalProc
+    bindProc: BindProc
     find: FindProc
     toString: ToStringProc
-    # properties
-    createWhenBind: bool
+
     kind: TypeKind
   
-  VMValue = object
+  VMValue* = object
     typ: PType
     data: pointer
 
@@ -63,7 +65,7 @@ type
     tail: int
     heap: Heap
     
-    sysMod: HeapSlot
+    sys: HeapSlot
 
 var types: array[TypeKind, VMType]
 
@@ -75,11 +77,12 @@ type
   Word* = distinct Symbol
   SetWord* = distinct Symbol
   GetWord = distinct Symbol
+  Native* = EvalProc
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
 
   # this goes directly to VMValue.data
-  Value* = TNone | int | Word | SetWord | BlockHead | ObjectHead
+  Value* = TNone | int | Word | SetWord | Native | BlockHead | ObjectHead
 
 const 
   None* = TNone(0)
@@ -99,6 +102,8 @@ template kind(T: typedesc[Value]): expr =
     tkWord
   elif T is SetWord:
     tkSetWord
+  elif T is Native:
+    tkNative
   elif T is BlockHead:
     tkBlock
   elif T is ObjectHead:
@@ -138,7 +143,6 @@ template saveFrame(vm: VM) =
   copyMem(addr vm.stack[vm.sp], vm.frame, vm.fp * sizeof(VMValue))
   inc vm.sp, vm.fp
   vm.fp = 0
-
 
 template restoreFrame(vm: VM) =
   vm.fp = cast[int](vm.stack[vm.sp].data)
@@ -187,30 +191,30 @@ proc toString[T: Value](code: Code): string = $(vmcast[T](code))
 # Eval
 #
 
-template eval(vm: VM, code: Code, ax: var VMValue): expr = code.val.typ.eval(vm, code, ax)
+template eval*(vm: VM, code: Code, ax: var VMValue): expr = code.val.typ.eval(vm, code, ax)
 
 proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
   var ip = HeapSlot(code)
   while ip.nxt != nil:
     ip = eval(vm, ip, rx)
 
-proc evalConst(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
+proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
   rx = code.val
   result = code.nxt
 
-proc evalWord(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
+proc evalWord(vm: VM, code: Code, rx: var VMValue): Code =
   vm.ax = cast[HeapSlot](code.ext).val
   vm.ip = code.nxt
   eval(vm, cast[HeapSlot](vm), rx) # tail call
 
-proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
+proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
   rx = cast[HeapSlot](code.ext).val
   result = code.nxt
 
-proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
+proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code =
   eval(vm, code.nxt, cast[HeapSlot](code.ext).val) # tail call
 
-proc evalNative(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
+proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
   (cast[EvalProc](code.val.data))(vm, code.nxt, rx) # tail call
 
 proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
@@ -231,34 +235,53 @@ proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} =
 # Find - find symbol in structure
 #
 
-template find*(vm: VM, code: Code, s: Symbol, create: bool): expr =
-  code.val.typ.find(vm, code, s, create)  
+template find*(vm: VM, code: Code, s: Symbol): expr =
+  code.val.typ.find(vm, code, s)  
 
-proc findDefault(vm: VM, code: Code, s: Symbol, create: bool): HeapSlot =
+proc findDefault(vm: VM, code: Code, s: Symbol): HeapSlot =
   raiseScriptError errMethodNotAllowed
 
-proc findObject(vm: VM, code: Code, s: Symbol, create: bool): HeapSlot =
+proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
   result = HeapSlot(vmcast[ObjectHead](code))
   while true:
     if result.ext == cast[HeapSlot](s):
       break
     if result.nxt == nil:
-      if create:
-        result.nxt = vm.alloc(s)
-        result = result.nxt
-        break
-      else:
-        raiseScriptError errSymNotFound
-        break
+      break
     result = result.nxt
 
 #
 # Bindings
 #
 
+template bnd*(vm: VM, code: Code, ctx: Code): expr =
+  code.val.typ.bindProc(vm, code, ctx)  
+
+proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = discard
+
+proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
+  template sym(): expr = Symbol(code.val.data)
+  result = find(vm, ctx, sym)
+  if result.nxt == nil:
+    result = find(vm, vm.sys, sym)
+    if result.nxt == nil:
+      raiseScriptError errSymNotFound
+
+proc bindSetWord(vm: VM, code: Code, ctx: Code): HeapSlot =
+  template sym(): expr = Symbol(code.val.data)
+  result = find(vm, ctx, sym)
+  if result.nxt == nil:
+    let sysSlot = find(vm, vm.sys, sym)
+    if sysSlot.nxt == nil:
+      result.nxt = vm.alloc(sym)
+      result = result.nxt
+    else:
+      result = sysSlot
+
+
 proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
   for i in code:
-    i.ext = find(vm, ctx, Symbol(i.val.data), i.val.typ.createWhenBind)
+    i.ext = bnd(vm, i, ctx)   
 
 #
 # Create VM
@@ -267,6 +290,7 @@ proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
 template defType(knd: TypeKind, ev: EvalProc, str: ToStringProc) =
   types[knd].eval = ev
   types[knd].find = findDefault
+  types[knd].bindProc = bindDefault
   types[knd].kind = knd
   types[knd].toString = str
 
@@ -280,14 +304,19 @@ defType tkBlock, evalConst, toString[BlockHead]
 defType tkObject, evalConst, toStringDefault
 defType tkFunc, evalFunc, toStringDefault
 
-types[tkSetWord].createWhenBind = true
 types[tkObject].find = findObject
+
+types[tkWord].bindProc = bindWord
+types[tkSetWord].bindProc = bindSetWord
 
 proc createVM*(): VM =
   result = create(RVM)
   result.heap = cast[Heap](alloc(HeapSize * sizeof HeapLayout))
   result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
+
+proc bootstrap*(vm: VM, natives: HeapSlot) =
+  vm.sys = natives
 
 #
 # Debug

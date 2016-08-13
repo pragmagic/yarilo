@@ -8,7 +8,6 @@ template sys(vm: VM): expr = ObjectHead(vm.sysMod)
 # Adapters
 #
 
-
 template store*(val: var VMValue, v: Value) = 
   val.typ = addr typeof(v)
   val.data = cast[pointer](v) 
@@ -173,8 +172,9 @@ converter toObject*(builder: ObjectBuilder): ObjectHead {.inline.} =
 converter toSelf*(builder: ObjectBuilder): HeapSlot {.inline.} = 
   builder.self
 
-proc add*(vm: VM, obj: var BlockBuilder, s: Symbol) {.inline.} =
+proc add*(vm: VM, obj: var ObjectBuilder, s: Symbol, val: Value) {.inline.} =
   obj.tail.ext = cast[HeapSlot](s)
+  store obj.tail.val, val
   let slot = vm.alloc()
   obj.tail.nxt = slot
   obj.tail = slot
