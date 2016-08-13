@@ -1,22 +1,6 @@
 
 include rvm
 
-#
-# Primitive types representing correspondent 
-#
-type
-  TNone = distinct int
-  Word* = distinct Symbol
-  SetWord* = distinct Symbol
-  GetWord = distinct Symbol
-  BlockHead* = distinct HeapSlot
-  ObjectHead* = distinct HeapSlot
-
-  # this goes directly to VMValue.data
-  Value* = TNone | int | Word | SetWord | BlockHead
-
-const 
-  None* = TNone(0)
 
 template sys(vm: VM): expr = ObjectHead(vm.sysMod)
 
@@ -24,53 +8,27 @@ template sys(vm: VM): expr = ObjectHead(vm.sysMod)
 # Adapters
 #
 
-template kind(T: typedesc[Value]): expr = 
-  when T is TNone:
-    tkNone
-  elif T is int:
-    tkInt
-  elif T is Word:
-    tkWord
-  elif T is SetWord:
-    tkSetWord
-  elif T is BlockHead:
-    tkBlock
-  else:
-    quit("unhandled value type")
-
-template typeof(v: Value): expr =
-  types[kind(type v)]
 
 template store*(val: var VMValue, v: Value) = 
   val.typ = addr typeof(v)
   val.data = cast[pointer](v) 
 
-converter toSlot(s: BlockHead): HeapSlot {.inline.} = HeapSlot(s)
-converter toSlot(s: ObjectHead): HeapSlot {.inline.} = HeapSlot(s)
-
 #
 # Object Ops
 #
 
-proc findSymbol(obj: ObjectHead, s: Symbol): HeapSlot {.inline.} =
-  var i = HeapSlot(obj)
-  while i != nil:
-    if i.ext == cast[pointer](s):
-      return i
-    i = i.nxt   
+# proc findSymbol(obj: ObjectHead, s: Symbol): HeapSlot {.inline.} =
+#   var i = HeapSlot(obj)
+#   while i != nil:
+#     if i.ext == cast[pointer](s):
+#       return i
+#     i = i.nxt   
 
-proc findSymbol(obj: ObjectHead, s: Symbol, failover: ObjectHead): HeapSlot =
-  result = obj.findSymbol(s)
-  if result == nil:
-    result = failover.findSymbol(s)
+# proc findSymbol(obj: ObjectHead, s: Symbol, failover: ObjectHead): HeapSlot =
+#   result = obj.findSymbol(s)
+#   if result == nil:
+#     result = failover.findSymbol(s)
 
-template find(res: expr, obj: ObjectHead, s: Symbol, notFound: stmt) =
-  res = obj
-  while true:
-    if res.ext == cast[pointer](s):
-      break
-    if res.nxt == nil:
-      notFound
   
 # proc findOrAddSymbol(vm: VM, obj: var ObjectHead, s: Symbol): HeapSlot =
 #   var i = HeapSlot(obj)
@@ -95,19 +53,56 @@ template find(res: expr, obj: ObjectHead, s: Symbol, notFound: stmt) =
 # Bindings
 #
 
-proc bindWord(code: Code, ctx: ObjectHead) =
-  findSymbol(ctx, Symbol(code.val.data))
+# template find(res: var pointer, obj: ObjectHead, s: Symbol, notFound: stmt) =
+#   res = HeapSlot(obj)
+#   while true:
+#     if res.ext == cast[HeapSlot](s):
+#       break
+#     if res.nxt == nil:
+#       notFound
+#       break
+#     else:
+#       res = res.nxt
 
-proc bindAndExtend*(vm: VM, blk: BlockHead, ctx: var ObjectHead) = 
-  for i in blk:
-    if i.kind == tkWord or i.kind == tkSetWord:
-      let sym = Symbol(i.val.data)
-      var bound: HeapSlot
-      bound.find(ctx, sym):        
-        if i.kind == tkWord:
-          raiseScriptError errSymNotFound
-        else:
-          bound.nxt = vm.alloc(sym)
+# type
+#   BindProc = proc (vm: VM, code: Code, ctx: Code) {.nimcall.}
+
+
+# proc bindGen(vm: VM, code: Code, ctx: Code) =
+#   var i = code
+#   while i != nil:
+#     i.ext = (ctx.val.typ.find)(vm, ctx, Symbol(code.val.data), code.val.typ.createWhenBind)
+#     i = i.nxt
+
+# proc bindWord(vm: VM, code: Code, ctx: Code) =
+#   template res(): expr = code.ext
+#   template sym(): expr = Symbol(code.val.data) 
+#   find(res, cast[ObjectHead](ctx.val.data), sym):
+#     raiseScriptError errSymNotFound
+
+# proc bindSetWord(vm: VM, code: Code, ctx: ObjectHead) =
+#   template res(): expr = code.ext
+#   template sym(): expr = Symbol(code.val.data) 
+#   find(res, ctx, sym):
+
+# var 
+#   a, b: BindProc
+#   c: FindProc
+
+# a = bindWord
+# b = bindGen
+# c = findObject
+
+# proc bindAndExtend*(vm: VM, blk: BlockHead, ctx: var ObjectHead) = 
+#   for i in blk:
+#     if i.kind == tkWord or i.kind == tkSetWord:
+#       let sym = Symbol(i.val.data)
+#       var bound: HeapSlot
+#       bound.find(ctx, sym):        
+#         if i.kind == tkWord:
+#           raiseScriptError errSymNotFound
+#         else:
+#           bound.nxt = vm.alloc(sym)
           
 
 # proc bindToContext*(vm: VM, blk: BlockHead, ctx: ObjectHead) =
@@ -123,15 +118,11 @@ proc bindAndExtend*(vm: VM, blk: BlockHead, ctx: var ObjectHead) =
 # Eval
 #
 
-proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
-  evalAll(vm, HeapSlot(code), result)
 
 #
 # String Ops
 #
 
-proc `$`*(val: Value): string {.inline.} =
-  typeof(v).toString(cast[pointer](val))
 
 #
 # Builders
@@ -139,25 +130,57 @@ proc `$`*(val: Value): string {.inline.} =
 
 type
   BlockBuilder* = object
-    head: BlockHead
+    self: HeapSlot
     tail: HeapSlot
 
   ObjectBuilder* = object
-    head: ObjectHead
+    self: HeapSlot
     tail: HeapSlot
-
 
 #
 # Block Builder
 #
 
-converter toBlock*(bb: BlockBuilder): BlockHead {.inline.} = bb.head
+proc makeBlock*(vm: VM): BlockBuilder =
+  result.self = vm.alloc()
+  result.tail = vm.alloc()
+  result.self.val.store BlockHead(result.tail)
 
-template add*(vm: VM, blk: var BlockBuilder, v: Value)  =
+converter toBlock*(builder: BlockBuilder): BlockHead {.inline.} = 
+  vmcast[BlockHead](builder.self)
+
+converter toSelf*(builder: BlockBuilder): HeapSlot {.inline.} = 
+  builder.self
+
+proc add*(vm: VM, blk: var BlockBuilder, v: Value) {.inline.} =
+  store blk.tail.val, v
   let slot = vm.alloc()
-  store(slot.val, v)
-  if blk.tail == nil:
-    blk.head = BlockHead(slot)
-  else:
-    blk.tail.nxt = slot
+  blk.tail.nxt = slot
   blk.tail = slot
+
+#
+# Object Builder
+#
+
+proc makeObject*(vm: VM): ObjectBuilder =
+  result.self = vm.alloc()
+  result.tail = vm.alloc()
+  result.self.val.store ObjectHead(result.tail)
+
+converter toObject*(builder: ObjectBuilder): ObjectHead {.inline.} = 
+  vmcast[ObjectHead](builder.self)
+
+converter toSelf*(builder: ObjectBuilder): HeapSlot {.inline.} = 
+  builder.self
+
+proc add*(vm: VM, obj: var BlockBuilder, s: Symbol) {.inline.} =
+  obj.tail.ext = cast[HeapSlot](s)
+  let slot = vm.alloc()
+  obj.tail.nxt = slot
+  obj.tail = slot
+
+when isMainModule:
+  var vm = createVM()
+  var builder = makeBlock(vm)
+  vm.add builder, 777
+  vm.dumpHeap(0, 20)

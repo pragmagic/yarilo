@@ -2,6 +2,7 @@
 type
   ErrCode* = enum
     errOk
+    errMethodNotAllowed
     errSymNotFound
     errWordNotBound
     fatalSymtableOutOfSpace

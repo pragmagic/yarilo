@@ -9,7 +9,8 @@ const
 
 type
   EvalProc = proc(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.}
-  ToStringProc = proc(data: pointer): string {.nimcall.}
+  FindProc = proc (vm: VM, code: Code, s: Symbol, create: bool): HeapSlot {.nimcall.}  
+  ToStringProc = proc(code: Code): string {.nimcall.}
 
   TypeKind = enum
     tkNone
@@ -25,8 +26,11 @@ type
   PType = ptr VMType
   VMType = object
     eval: EvalProc
-    kind: TypeKind
+    find: FindProc
     toString: ToStringProc
+    # properties
+    createWhenBind: bool
+    kind: TypeKind
   
   VMValue = object
     typ: PType
@@ -36,7 +40,7 @@ type
   HeapLayout = object
     val: VMValue
     nxt: HeapSlot
-    ext: pointer
+    ext: HeapSlot # sometimes points to Symbol
 
   Heap = ptr array[HeapSize, HeapLayout]
   Stack = ptr array[StackSize, VMValue]
@@ -64,10 +68,50 @@ type
 var types: array[TypeKind, VMType]
 
 #
-# Accessors
+# Primitive types representing correspondent 
+#
+type
+  TNone = distinct int
+  Word* = distinct Symbol
+  SetWord* = distinct Symbol
+  GetWord = distinct Symbol
+  BlockHead* = distinct HeapSlot
+  ObjectHead* = distinct HeapSlot
+
+  # this goes directly to VMValue.data
+  Value* = TNone | int | Word | SetWord | BlockHead | ObjectHead
+
+const 
+  None* = TNone(0)
+
+#
+# Accessors, Adapters, and Converters
 #
 
 template kind(s: HeapSlot): expr = s.val.typ.kind
+
+template kind(T: typedesc[Value]): expr = 
+  when T is TNone:
+    tkNone
+  elif T is int:
+    tkInt
+  elif T is Word:
+    tkWord
+  elif T is SetWord:
+    tkSetWord
+  elif T is BlockHead:
+    tkBlock
+  elif T is ObjectHead:
+    tkObject
+  else:
+    {.fatal: "unhandled value type".}
+
+template typeof(v: Value): expr =
+  types[kind(type v)]
+
+proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} =
+  assert slot.val.typ.kind == kind(T)
+  cast[T](slot.val.data)
 
 #
 # Heap Operations
@@ -80,7 +124,7 @@ template alloc*(vm: VM): expr =
 
 template alloc(vm: VM, s: Symbol): expr =
   let slot = addr vm.heap[vm.tail]
-  slot.ext = cast[pointer](s)  
+  slot.ext = cast[HeapSlot](s)  
   inc vm.tail
   slot
 
@@ -105,13 +149,39 @@ template restoreFrame(vm: VM) =
 # List Ops
 #
 
-template first(s: HeapSlot): expr = cast[HeapSlot](s.val.data) 
+#template first(s: HeapSlot): expr = cast[HeapSlot](s.val.data) 
 
-iterator items(s: HeapSlot): HeapSlot =
-  var i = s
-  while i != nil:
+iterator items(s: BlockHead | ObjectHead): HeapSlot =
+  var i = HeapSlot(s)
+  while i.nxt != nil:
     yield i
     i = i.nxt 
+
+#
+# String conversions
+#
+
+proc `$`*(slot: HeapSlot): string {.inline.} = 
+  slot.val.typ.toString(slot)
+
+proc toStringDefault(code: Code): string =
+  result = "[to-string not implemented]"
+
+proc `$`*(w: Word): string {.inline.} =
+  $Symbol(w)
+
+proc `$`*(blk: BlockHead): string =
+  result = "["
+  var i = cast[HeapSlot](blk)
+  while true:
+    result.add $i
+    i = i.nxt
+    if i.nxt == nil: 
+      result.add ']'
+      break
+    result.add ' '
+
+proc toString[T: Value](code: Code): string = $(vmcast[T](code)) 
 
 #
 # Eval
@@ -119,9 +189,9 @@ iterator items(s: HeapSlot): HeapSlot =
 
 template eval(vm: VM, code: Code, ax: var VMValue): expr = code.val.typ.eval(vm, code, ax)
 
-proc evalAll(vm: VM, code: Code, rx: var VMValue) {.inline.} =
-  var ip = code
-  while ip != nil:
+proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
+  var ip = HeapSlot(code)
+  while ip.nxt != nil:
     ip = eval(vm, ip, rx)
 
 proc evalConst(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
@@ -143,28 +213,52 @@ proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
 proc evalNative(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
   (cast[EvalProc](code.val.data))(vm, code.nxt, rx) # tail call
 
-proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code {.nimcall.} =
-  template params(): expr = code.first
-  template body(): expr = params.nxt
+proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
+  template params(): expr = vmcast[BlockHead](code)
+  template body(): expr = vmcast[BlockHead](HeapSlot(params).nxt)
   vm.saveFrame
   result = code.nxt
-  for i in params.first:
+  for i in params:
     result = eval (vm, result, vm.frame[vm.fp])
     inc vm.fp
-  evalAll(vm, body.first, rx)
+  evalAll(vm, body, rx)
   vm.restoreFrame
 
+proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
+  evalAll(vm, code, result)
+
 #
-# String conversions
+# Find - find symbol in structure
 #
 
-proc toStringDefault(val: pointer): string =
-  result = "[to-string not implemented]"
+template find*(vm: VM, code: Code, s: Symbol, create: bool): expr =
+  code.val.typ.find(vm, code, s, create)  
 
-proc toStringInt(val: pointer): string = $(cast[int](val))
+proc findDefault(vm: VM, code: Code, s: Symbol, create: bool): HeapSlot =
+  raiseScriptError errMethodNotAllowed
 
-proc `$`*(val: VMValue): string {.inline.} = 
-  val.typ.toString(val.data)
+proc findObject(vm: VM, code: Code, s: Symbol, create: bool): HeapSlot =
+  result = HeapSlot(vmcast[ObjectHead](code))
+  while true:
+    if result.ext == cast[HeapSlot](s):
+      break
+    if result.nxt == nil:
+      if create:
+        result.nxt = vm.alloc(s)
+        result = result.nxt
+        break
+      else:
+        raiseScriptError errSymNotFound
+        break
+    result = result.nxt
+
+#
+# Bindings
+#
+
+proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
+  for i in code:
+    i.ext = find(vm, ctx, Symbol(i.val.data), i.val.typ.createWhenBind)
 
 #
 # Create VM
@@ -172,16 +266,22 @@ proc `$`*(val: VMValue): string {.inline.} =
 
 template defType(knd: TypeKind, ev: EvalProc, str: ToStringProc) =
   types[knd].eval = ev
+  types[knd].find = findDefault
   types[knd].kind = knd
   types[knd].toString = str
 
 defType tkNone, evalConst, toStringDefault
-defType tkInt, evalConst, toStringInt
-defType tkWord, evalWord, toStringDefault
+defType tkInt, evalConst, toString[int]
+defType tkWord, evalWord, toString[Word]
 defType tkSetWord, evalSetWord, toStringDefault
 defType tkGetWord, evalGetWord, toStringDefault
 defType tkNative, evalNative, toStringDefault
+defType tkBlock, evalConst, toString[BlockHead]
+defType tkObject, evalConst, toStringDefault
 defType tkFunc, evalFunc, toStringDefault
+
+types[tkSetWord].createWhenBind = true
+types[tkObject].find = findObject
 
 proc createVM*(): VM =
   result = create(RVM)

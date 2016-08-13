@@ -1,14 +1,10 @@
 
-#
-# High level API for doing RVM in Nim
-#
-
 import core
 import parseutils
 import strutils
 
-proc parse(vm: VM, s: string, pos: var int): BlockHead =
-  var builder: BlockBuilder
+proc parse(vm: VM, s: string, pos: var int): BlockBuilder =
+  result = makeBlock(vm)
   var i = pos
   while true:
     if i >= s.len: break
@@ -19,21 +15,20 @@ proc parse(vm: VM, s: string, pos: var int): BlockHead =
       break
     of '[':
       inc i
-      vm.add builder, vm.parse(s, i)
+      vm.add result, vm.parse(s, i)
     of Digits:
       let start = i
       while i < s.len and (s[i] in Digits): inc(i)
       let iv = parseInt(s.substr(start, i-1))
-      vm.add builder, iv
+      vm.add result, iv
     else:
       let start = i
       while i < s.len and not (s[i] in Whitespace) and s[i] != ']': inc(i)
       if s[i-1] == ':':
-        vm.add builder, SetWord(!substr(s, start, i-2))
+        vm.add result, SetWord(!substr(s, start, i-2))
       else:
-        vm.add builder, Word(!substr(s, start, i-1))
+        vm.add result, Word(!substr(s, start, i-1))
   pos = i
-  result = builder
 
 proc parse*(vm: VM, s: string): BlockHead =
   var pos = 0
@@ -41,6 +36,6 @@ proc parse*(vm: VM, s: string): BlockHead =
 
 when isMainModule:
   var vm = createVM()
-  discard vm.parse "x y z"
+  echo vm.parse "1 [a b] 2 3"
   vm.dumpHeap(0, 20)
 
