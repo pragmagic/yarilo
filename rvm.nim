@@ -12,7 +12,7 @@ type
   FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
   BindProc = proc (vm: VM, code: Code, ctx: Code): HeapSlot {.nimcall.} 
 
-  ToStringProc = proc(code: Code): string {.nimcall.}
+  ToStringProc = proc(val: VMValue): string {.nimcall.}
 
   TypeKind = enum
     tkNone
@@ -114,9 +114,11 @@ template kind(T: typedesc[Value]): expr =
 template typeof(v: Value): expr =
   types[kind(type v)]
 
-proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} =
-  assert slot.val.typ.kind == kind(T)
-  cast[T](slot.val.data)
+proc vmcast*[T: Value](val: VMValue): T {.inline.} =
+  assert val.typ.kind == kind(T)
+  cast[T](val.data)
+
+proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} = vmcast[T](slot.val)
 
 #
 # Heap Operations
@@ -165,14 +167,13 @@ iterator items(s: BlockHead | ObjectHead): HeapSlot =
 # String conversions
 #
 
-proc `$`*(slot: HeapSlot): string {.inline.} = 
-  slot.val.typ.toString(slot)
+proc `$`*(slot: HeapSlot): string {.inline.} = $slot.val
 
-proc toStringDefault(code: Code): string =
-  result = "[to-string not implemented]"
+proc `$`*(val: VMValue): string {.inline.} = val.typ.toString(val)
 
-proc `$`*(w: Word): string {.inline.} =
-  $Symbol(w)
+proc toStringDefault(val: VMValue): string = "[to-string not implemented]"
+
+proc `$`*(w: Word): string {.inline.} = $Symbol(w)
 
 proc `$`*(blk: BlockHead): string =
   result = "["
@@ -185,7 +186,7 @@ proc `$`*(blk: BlockHead): string =
       break
     result.add ' '
 
-proc toString[T: Value](code: Code): string = $(vmcast[T](code)) 
+proc toString[T: Value](val: VMValue): string = $(vmcast[T](val)) 
 
 #
 # Eval
