@@ -2,22 +2,20 @@
 import core
 import parse
 
-import strutils
-
-proc printImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot  =
-  echo "code: ", toHex(cast[int](code))
+proc printImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
   result = eval(vm, code, rx)  
   echo "printing: ", rx
 
-# proc funcImpl(vm: VM): Value {.cdecl.} =
-#   let params = vm.stackFrame 1
-#   let body = vm.stackFrame 2
-#   result = vm.makeFunc(params.asBlock, body.asBlock)
+proc funcImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
+  var params, body: VMValue
+  result = eval(vm, code, params)
+  result = eval(vm, result, body)
+  rx.store vm.makeFunc(vmcast[BlockHead](params), vmcast[BlockHead](params))
 
-proc makeNatives*(vm: VM): HeapSlot =
+proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()
   vm.add natives, !"print", printImpl 
-  #vm.add natives, !"func", vm.makeFunc(vm.parse "params body", funcImpl)
+  vm.add natives, !"func", funcImpl
   result = natives 
 
 when isMainModule:

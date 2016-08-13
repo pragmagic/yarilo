@@ -8,10 +8,6 @@ template sys(vm: VM): expr = ObjectHead(vm.sysMod)
 # Adapters
 #
 
-template store*(val: var VMValue, v: Value) = 
-  val.typ = addr typeof(v)
-  val.data = cast[pointer](v) 
-
 #
 # Object Ops
 #
@@ -129,11 +125,11 @@ template store*(val: var VMValue, v: Value) =
 
 type
   BlockBuilder* = object
-    self: HeapSlot
+    head: HeapSlot
     tail: HeapSlot
 
   ObjectBuilder* = object
-    self: HeapSlot
+    head*: HeapSlot
     tail: HeapSlot
 
 #
@@ -141,15 +137,11 @@ type
 #
 
 proc makeBlock*(vm: VM): BlockBuilder =
-  result.self = vm.alloc()
-  result.tail = vm.alloc()
-  result.self.val.store BlockHead(result.tail)
+  result.head = vm.alloc()
+  result.tail = result.head
 
 converter toBlock*(builder: BlockBuilder): BlockHead {.inline.} = 
-  vmcast[BlockHead](builder.self)
-
-converter toSelf*(builder: BlockBuilder): HeapSlot {.inline.} = 
-  builder.self
+  BlockHead(builder.head)
 
 proc add*(vm: VM, blk: var BlockBuilder, v: Value) {.inline.} =
   store blk.tail.val, v
@@ -162,15 +154,11 @@ proc add*(vm: VM, blk: var BlockBuilder, v: Value) {.inline.} =
 #
 
 proc makeObject*(vm: VM): ObjectBuilder =
-  result.self = vm.alloc()
-  result.tail = vm.alloc()
-  result.self.val.store ObjectHead(result.tail)
+  result.head = vm.alloc()
+  result.tail = result.head
 
 converter toObject*(builder: ObjectBuilder): ObjectHead {.inline.} = 
-  vmcast[ObjectHead](builder.self)
-
-converter toSelf*(builder: ObjectBuilder): HeapSlot {.inline.} = 
-  builder.self
+  ObjectHead(builder.head)
 
 proc add*(vm: VM, obj: var ObjectBuilder, s: Symbol, val: Value) {.inline.} =
   obj.tail.ext = cast[HeapSlot](s)
@@ -178,6 +166,27 @@ proc add*(vm: VM, obj: var ObjectBuilder, s: Symbol, val: Value) {.inline.} =
   let slot = vm.alloc()
   obj.tail.nxt = slot
   obj.tail = slot
+
+#
+# Func
+#
+
+proc locals(vm: VM, params: BlockHead): ObjectHead =
+  var builder = vm.makeObject
+  for p in params:
+    let w = vmcast[Word](p)
+    vm.add builder, Symbol(w), None 
+  result = builder
+
+proc makeFunc*(vm: VM, params: BlockHead, impl: BlockHead): FuncHead =
+  let localCtx = vm.locals params
+  let head = vm.alloc localCtx
+  let body = vm.alloc impl
+  let tail = vm.alloc
+  head.nxt = body
+  body.nxt = tail 
+  vm.bindAll(impl, head)
+  result = FuncHead(head)  
 
 when isMainModule:
   var vm = createVM()

@@ -8,11 +8,18 @@ import strutils
 var vm = createVM()
 vm.bootstrap(vm.makeNatives)
 
-var user = makeObject(vm)
+let ob = makeObject(vm)
+echo "ob: ", toHex(cast[int](ob.head))
+var user = vm.alloc (ob)
+
+echo "user: ", toHex(cast[int](user))
 
 proc interpret(s: string) =
   let b = vm.parse s
-  echo b
+  echo "evaluating:", b
+  vm.dumpHeap 0, 20
+  vm.expandAll(b, user)
+  vm.dumpHeap 0, 20
   vm.bindAll(b, user)
   vm.dumpHeap(0, 20)
   echo "EVAL: ", vm.eval(b) 
@@ -23,8 +30,6 @@ proc interpret(s: string) =
 
 interpret """
   print 42
+  my: func [x] [print x]
+  my 77
 """
-#   my: func [x] [print x]
-
-#   my 77
-# """
