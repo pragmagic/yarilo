@@ -40,8 +40,8 @@ type
 
   HeapSlot* = ptr HeapLayout
   HeapLayout = object
-    val: VMValue
     nxt: HeapSlot
+    val: VMValue
     ext: HeapSlot # sometimes points to Symbol
 
   Heap = ptr array[HeapSize, HeapLayout]
@@ -52,8 +52,8 @@ type
 
   VM* = ptr RVM
   RVM = object
-    ax: VMValue         # 
     ip: Code          # Resembles HeapLayout
+    ax: VMValue         # 
     ext: pointer      #
 
     fp: int           # current frame size
