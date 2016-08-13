@@ -276,11 +276,6 @@ proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
 # Bindings
 #
 
-template bnd*(vm: VM, code: Code, ctx: Code): expr =
-  code.val.typ.bindProc(vm, code, ctx)  
-
-proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = discard
-
 proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
   template sym(): expr = Symbol(code.val.data)
   result = find(vm, ctx, sym)
@@ -289,7 +284,7 @@ proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
     if result.nxt == nil:
       raiseScriptError errSymNotFound
 
-proc expand(vm: VM, code: Code, ctx: Code) {.inline.} =
+proc expand(vm: VM, code: Code, ctx: Code) =
   template sym(): expr = Symbol(code.val.data)
   var slot = find(vm, ctx, sym)
   if slot.nxt == nil:
@@ -297,13 +292,14 @@ proc expand(vm: VM, code: Code, ctx: Code) {.inline.} =
     if sysSlot.nxt == nil:
       slot.ext = cast[HeapSlot](sym)
       slot.nxt = vm.alloc()
-      echo toHex(cast[int](slot))
 
-proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
+proc bindAll*(vm: VM, code: BlockHead, ctx: Code)  =
   for i in code:
-    i.ext = bnd(vm, i, ctx)
+    let fn = i.val.typ.bindProc
+    if fn != nil: 
+      i.ext = (fn)(vm, i, ctx)
 
-proc expandAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
+proc expandAll*(vm: VM, code: BlockHead, ctx: Code)  =
   for i in code:
     if i.val.typ.kind == tkSetWord:
       expand(vm, i, ctx)
@@ -315,7 +311,6 @@ proc expandAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
 template defType(knd: TypeKind, ev: EvalProc, str: ToStringProc) =
   types[knd].eval = ev
   types[knd].find = findDefault
-  types[knd].bindProc = bindDefault
   types[knd].kind = knd
   types[knd].toString = str
 
