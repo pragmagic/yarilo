@@ -145,7 +145,7 @@ converter toBlock*(builder: BlockBuilder): BlockHead {.inline.} =
 
 proc add*(vm: VM, blk: var BlockBuilder, v: Value) {.inline.} =
   store blk.tail.val, v
-  let slot = vm.alloc()
+  let slot = vm.alloc(None)
   blk.tail.nxt = slot
   blk.tail = slot
 

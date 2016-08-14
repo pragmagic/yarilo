@@ -21,7 +21,18 @@ proc interpret(s: string) =
 #            else: readAll stdin
 
 interpret """
-  print 42
+  print 12 + 42
+  print 5 = 5
+  i: 5
+  print equal i 5
+  i: 6
+  print equal i 5
+  while [i = 6] [print i + 55 i: 7]  
+"""
+
+let x = """" 
   my: func [x] [print x]
-  my 77 + 22
+  equal 5 5
+  add 77 99
+
 """

@@ -1,5 +1,5 @@
 
-import err
+include err
 
 const 
   MaxSymbols = 65536
