@@ -5,7 +5,7 @@ include sym
 const 
   HeapSize = 1 shl 16
   StackSize = 1 shl 16
-  StackFrameSize = 256
+  # StackFrameSize = 256
 
 type
   EvalProc = proc (vm: VM, code: Code, rx: var VMValue): HeapSlot {.nimcall.}
@@ -20,6 +20,7 @@ type
     tkWord
     tkSetWord
     tkGetWord
+    tkOperation
     tkNative
     tkBlock
     tkObject
@@ -46,22 +47,18 @@ type
 
   Heap = ptr array[HeapSize, HeapLayout]
   Stack = ptr array[StackSize, VMValue]
-  StackFrame = ptr array[StackFrameSize, VMValue]
+  # StackFrame = ptr array[StackFrameSize, VMValue]
 
   Code = HeapSlot
 
   VM* = ptr RVM
   RVM = object
-    ip: Code          # Resembles HeapLayout
-    ax: VMValue         # 
-    ext: pointer      #
-
-    fp: int           # current frame size
-    frame: StackFrame
-
+    ax: HeapLayout # Register AX
+    bx: HeapLayout # Register BX
+    # fp: int           # current frame size
+    # frame: StackFrame
     sp: int
     stack: Stack 
-
     tail: int
     heap: Heap
     
@@ -76,14 +73,16 @@ type
   TNone = distinct int
   Word* = distinct Symbol
   SetWord* = distinct Symbol
-  GetWord = distinct Symbol
+  GetWord* = distinct Symbol
+  Operation* = distinct Symbol
   Native* = EvalProc
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
   FuncHead* = distinct HeapSlot
 
   # this goes directly to VMValue.data
-  Value* = TNone | int | Word | SetWord | Native | BlockHead | ObjectHead | FuncHead
+  Value* = TNone | int | Word | SetWord | GetWord | Operation | Native | 
+           BlockHead | ObjectHead | FuncHead
 
 const 
   None* = TNone(0)
@@ -103,6 +102,8 @@ template kind(T: typedesc[Value]): expr =
     tkWord
   elif T is SetWord:
     tkSetWord
+  elif T is Operation:
+    tkOperation
   elif T is Native:
     tkNative
   elif T is BlockHead:
@@ -152,17 +153,17 @@ template alloc(vm: VM, s: Symbol): expr =
 # Stack Op
 #
 
-template saveFrame(vm: VM) =
-  vm.frame[vm.fp].data = cast[pointer](vm.fp)
-  inc vm.fp
-  copyMem(addr vm.stack[vm.sp], vm.frame, vm.fp * sizeof(VMValue))
-  inc vm.sp, vm.fp
-  vm.fp = 0
+# template saveFrame(vm: VM) =
+#   vm.frame[vm.fp].data = cast[pointer](vm.fp)
+#   inc vm.fp
+#   copyMem(addr vm.stack[vm.sp], vm.frame, vm.fp * sizeof(VMValue))
+#   inc vm.sp, vm.fp
+#   vm.fp = 0
 
-template restoreFrame(vm: VM) =
-  vm.fp = cast[int](vm.stack[vm.sp].data)
-  dec vm.sp, vm.fp + 1
-  copyMem(vm.frame, addr vm.stack[vm.sp], vm.fp * sizeof(VMValue))
+# template restoreFrame(vm: VM) =
+#   vm.fp = cast[int](vm.stack[vm.sp].data)
+#   dec vm.sp, vm.fp + 1
+#   copyMem(vm.frame, addr vm.stack[vm.sp], vm.fp * sizeof(VMValue))
 
 #
 # List Ops
@@ -224,9 +225,9 @@ proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
   result = code.nxt
 
 proc evalWord(vm: VM, code: Code, rx: var VMValue): Code =
-  vm.ax = cast[HeapSlot](code.ext).val
-  vm.ip = code.nxt
-  eval(vm, cast[HeapSlot](vm), rx) # tail call
+  vm.ax.nxt = code.nxt
+  vm.ax.val = cast[HeapSlot](code.ext).val
+  eval(vm, addr vm.ax, rx) # tail call
 
 proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
   rx = cast[HeapSlot](code.ext).val
@@ -234,6 +235,13 @@ proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
 
 proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code =
   eval(vm, code.nxt, cast[HeapSlot](code.ext).val) # tail call
+
+proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
+  vm.ax.nxt = addr vm.bx
+  vm.ax.val = cast[HeapSlot](code.ext).val # op resolves to a function taking 2 arguments
+  vm.bx.nxt = code.nxt
+  vm.bx.val = rx
+  eval(vm, addr vm.ax, rx) # tail call
 
 proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
   (cast[EvalProc](code.val.data))(vm, code.nxt, rx) # tail call
@@ -319,6 +327,7 @@ defType tkInt, evalConst, toString[int]
 defType tkWord, evalWord, toString[Word]
 defType tkSetWord, evalSetWord, toString[SetWord]
 defType tkGetWord, evalGetWord, toStringDefault
+defType tkOperation, evalOperation, toStringDefault
 defType tkNative, evalNative, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
 defType tkObject, evalConst, toStringDefault
@@ -328,11 +337,12 @@ types[tkObject].find = findObject
 
 types[tkWord].bindProc = bindWord
 types[tkSetWord].bindProc = bindWord
+types[tkOperation].bindProc = bindWord
 
 proc createVM*(): VM =
   result = create(RVM)
   result.heap = cast[Heap](alloc(HeapSize * sizeof HeapLayout))
-  result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
+  #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
 
 proc bootstrap*(vm: VM, natives: ObjectHead) =
@@ -354,8 +364,8 @@ proc dumpHeap*(vm: VM, a, b: int) =
       toHex(pi[0], 8), " ", toHex(pi[1], 8), " - ", toHex(pi[2], 8), " ", toHex(pi[3], 8), s
 
 proc dumpStack*(vm: VM) = 
-  echo "Stack: bp: ", vm.fp 
-  for i in 0..vm.fp:
+  echo "Stack: bp: ", vm.sp 
+  for i in 0..vm.sp:
     let pi = cast[ptr array[2, int]](addr vm.stack[i])
     echo i, ": ", toHex(pi[0], 8), " ", toHex(pi[1], 8) 
 

@@ -23,5 +23,5 @@ proc interpret(s: string) =
 interpret """
   print 42
   my: func [x] [print x]
-  my 77
+  my 77 + 22
 """

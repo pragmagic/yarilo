@@ -26,6 +26,8 @@ proc parse(vm: VM, s: string, pos: var int): BlockBuilder =
       while i < s.len and not (s[i] in Whitespace) and s[i] != ']': inc(i)
       if s[i-1] == ':':
         vm.add result, SetWord(!substr(s, start, i-2))
+      elif s[start] in {'+', '-'}:
+        vm.add result, Operation(!substr(s, start, i-1))        
       else:
         vm.add result, Word(!substr(s, start, i-1))
   pos = i
