@@ -31,7 +31,7 @@ proc parse(vm: VM, s: string, pos: var int): BlockBuilder =
         vm.add result, true
       elif w == "false":
         vm.add result, false
-      elif w[0] in {'+', '-', '=', '>'} or w == "присовокупить" or w == "поболее" or w == "отнять":
+      elif w[0] in {'+', '-', '=', '>', '*'} or w == "присовокупить" or w == "поболее" or w == "отнять":
         vm.add result, Operation(!w)        
       else:
         vm.add result, Word(!w)

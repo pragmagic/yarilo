@@ -137,7 +137,7 @@ type
 #
 
 proc makeBlock*(vm: VM): BlockBuilder =
-  result.head = vm.alloc()
+  result.head = vm.alloc(None)
   result.tail = result.head
 
 converter toBlock*(builder: BlockBuilder): BlockHead {.inline.} = 
@@ -154,7 +154,7 @@ proc add*(vm: VM, blk: var BlockBuilder, v: Value) {.inline.} =
 #
 
 proc makeObject*(vm: VM): ObjectBuilder =
-  result.head = vm.alloc()
+  result.head = vm.alloc(None)
   result.tail = result.head
 
 converter toObject*(builder: ObjectBuilder): ObjectHead {.inline.} = 
@@ -163,7 +163,7 @@ converter toObject*(builder: ObjectBuilder): ObjectHead {.inline.} =
 proc add*(vm: VM, obj: var ObjectBuilder, s: Symbol, val: Value) {.inline.} =
   obj.tail.ext = cast[HeapSlot](s)
   store obj.tail.val, val
-  let slot = vm.alloc()
+  let slot = vm.alloc(None)
   obj.tail.nxt = slot
   obj.tail = slot
 
@@ -174,7 +174,7 @@ proc add*(vm: VM, obj: var ObjectBuilder, s: Symbol, val: Value) {.inline.} =
 proc locals(vm: VM, params: BlockHead): ObjectHead =
   var builder = vm.makeObject
   for p in params:
-    let w = vmcast[Word](p)
+    let w = vmcast[Word](p.val)
     vm.add builder, Symbol(w), None 
   result = builder
 
@@ -182,7 +182,7 @@ proc makeFunc*(vm: VM, params: BlockHead, impl: BlockHead): FuncHead =
   let localCtx = vm.locals params
   let head = vm.alloc localCtx
   let body = vm.alloc impl
-  let tail = vm.alloc
+  let tail = vm.alloc None
   head.nxt = body
   body.nxt = tail 
   vm.bindAll(impl, head)

@@ -6,21 +6,22 @@ import os
 import strutils
 
 var vm = createVM()
-vm.bootstrap(vm.makeNatives)
 
-var user = vm.alloc makeObject(vm)
+var user = vm.alloc vm.makeObject
+var sys = vm.alloc vm.makeNatives
 
 proc interpret(s: string) =
   let b = vm.parse s
   #echo "evaluating:", b
   vm.expandAll(b, user)
+  vm.bindAll(b, sys)
   vm.bindAll(b, user)
   echo "Result: ", vm.eval(b) 
 
-let code = if paramCount() > 0: readFile paramStr(1)
-           else: readAll stdin
-
-interpret code
+if paramCount() > 0: 
+  interpret readFile paramStr(1)
+else: 
+  echo "please specify script file."
 
 # let z = """
 #   print 12 + 42

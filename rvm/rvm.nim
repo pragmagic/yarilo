@@ -63,7 +63,7 @@ type
     tail: int
     heap: Heap
     
-    sys: HeapSlot
+    null: HeapSlot
 
 var types: array[TypeKind, VMType]
 
@@ -124,7 +124,7 @@ proc vmcast*[T: Value](val: VMValue): T {.inline.} =
   assert val.typ.kind == kind(T)
   cast[T](val.data)
 
-proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} = vmcast[T](slot.val)
+#proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} = vmcast[T](slot.val)
 
 template typeof(v: Value): expr =
   types[kind(type v)]
@@ -133,26 +133,25 @@ template store*(val: var VMValue, v: Value) =
   val.typ = addr typeof(v)
   val.data = cast[pointer](v) 
 
+template isNil(slot: HeapSlot): expr = slot.nxt == nil
+
 #
 # Heap Operations
 #
 
-template alloc*(vm: VM): expr = 
-  let slot = addr vm.heap[vm.tail]
-  inc vm.tail
-  slot
+# template alloc*(vm: VM): expr = 
+#   let slot = addr vm.heap[vm.tail]
+#   inc vm.tail
+#   slot
 
-template alloc*(vm: VM, v: Value): expr = 
-  let slot = addr vm.heap[vm.tail]
-  store slot.val, v
+proc alloc*(vm: VM, v: Value): HeapSlot {.inline.} = 
+  result = addr vm.heap[vm.tail]
+  store result.val, v
   inc vm.tail
-  slot
 
-template alloc(vm: VM, s: Symbol): expr =
-  let slot = addr vm.heap[vm.tail]
-  slot.ext = cast[HeapSlot](s)  
-  inc vm.tail
-  slot
+proc alloc*(vm: VM, s: Symbol): HeapSlot {.inline.} =
+  result = vm.alloc None
+  result.ext = cast[HeapSlot](s)  
 
 #
 # Stack Op
@@ -178,7 +177,7 @@ template alloc(vm: VM, s: Symbol): expr =
 
 iterator items*(s: BlockHead | ObjectHead): HeapSlot =
   var i = HeapSlot(s)
-  while i.nxt != nil:
+  while not isNil i:
     yield i
     i = i.nxt 
 
@@ -205,14 +204,34 @@ proc `$`*(blk: BlockHead): string =
   while true:
     result.add $i.val
     i = i.nxt
-    if i.nxt == nil: 
+    if i.isNil: 
+      result.add ']'
+      break
+    result.add ' '
+
+proc `$`*(blk: ObjectHead): string =
+  result = "["
+  var i = cast[HeapSlot](blk)
+  while true:
+    result.add $cast[Symbol](i.ext)
+    result.add ": "
+    result.add toHex(cast[int](i.val.typ))
+    i = i.nxt
+    if i.isNil: 
       result.add ']'
       break
     result.add ' '
 
 proc toString[T: Value](val: VMValue): string = $(vmcast[T](val)) 
 
-proc `$`*(slot: HeapSlot): string {.inline.} = "{" & $slot.val & "}"
+proc `$`*(slot: HeapSlot): string {.inline.} = 
+  result = "@ "
+  result.add toHex(cast[int](slot), 8) 
+  result.add "<next: "
+  result.add toHex(cast[int](slot.nxt), 8)
+  result.add " kind: "
+  result.add $slot.val.typ.kind
+  result.add ">"
 
 #
 # Errors
@@ -236,7 +255,7 @@ template eval*(vm: VM, code: Code, ax: var VMValue): expr =
 
 proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
   var ip = HeapSlot(code)
-  while ip.nxt != nil:
+  while not ip.isNil:
     ip = eval(vm, ip, rx)
 
 proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
@@ -277,13 +296,12 @@ proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
 
 proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
   # echo "native: ", code.val
-  (cast[EvalProc](code.val.data))(vm, code.nxt, rx) # tail call
+  (vmcast[Native](code.val))(vm, code.nxt, rx) # tail call
 
 proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
-  # echo "func: ", code.val
-  template first(): expr = cast[HeapSlot](code.val.data)
-  template params(): expr = vmcast[ObjectHead](first())
-  template body(): expr = vmcast[BlockHead](first.nxt)
+  let head = cast[HeapSlot](code.val.data)
+  let params = vmcast[ObjectHead](head.val)
+  let body = vmcast[BlockHead](head.nxt.val)
   #vm.saveFrame
   result = code.nxt
   for i in params:
@@ -307,11 +325,11 @@ proc findDefault(vm: VM, code: Code, s: Symbol): HeapSlot =
   raiseScriptError errMethodNotAllowed
 
 proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
-  result = HeapSlot(vmcast[ObjectHead](code))
+  result = HeapSlot(vmcast[ObjectHead](code.val))
   while true:
-    if result.ext == cast[HeapSlot](s):
+    if result.isNil:
       break
-    if result.nxt == nil:
+    if result.ext == cast[HeapSlot](s):
       break
     result = result.nxt
 
@@ -319,38 +337,32 @@ proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
 # Bindings
 #
 
-template bnd(vm: VM, code: Code, ctx: Code): expr = 
+proc bnd(vm: VM, code: Code, ctx: Code): HeapSlot {.inline.} = 
   code.val.typ.bindProc(vm, code, ctx)
 
 proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
   for i in code:
     let bnd = bnd(vm, i, ctx)
-    if bnd != nil: i.ext = bnd
+    if not bnd.isNil:
+      i.ext = bnd
 
-proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = discard
+proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = vm.null
 
-proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
-  template sym(): expr = Symbol(code.val.data)
-  result = find(vm, ctx, sym)
-  if result.nxt == nil:
-    result = find(vm, vm.sys, sym)
-    # if result.nxt == nil:
-    #   raiseScriptError errSymNotFound, code.val
+proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot = 
+  find(vm, ctx, Symbol(code.val.data))
 
 proc bindBlock(vm: VM, code: Code, ctx: Code): HeapSlot =
-  result = code.nxt
-  vm.bindAll(vmcast[BlockHead](code), ctx)
+  result = vm.null
+  vm.bindAll(vmcast[BlockHead](code.val), ctx)
 
-proc expand(vm: VM, code: Code, ctx: Code) =
-  template sym(): expr = Symbol(code.val.data)
-  var slot = find(vm, ctx, sym)
+proc expand(vm: VM, code: Code, ctx: Code) {.inline.} =
+  let sym = Symbol(code.val.data)
+  let slot = find(vm, ctx, sym)
   if slot.nxt == nil:
-    let sysSlot = find(vm, vm.sys, sym)
-    if sysSlot.nxt == nil:
-      slot.ext = cast[HeapSlot](sym)
-      slot.nxt = vm.alloc()
+    slot.ext = cast[HeapSlot](sym)
+    slot.nxt = vm.alloc(None)
 
-proc expandAll*(vm: VM, code: BlockHead, ctx: Code)  =
+proc expandAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
   for i in code:
     if i.val.typ.kind == tkSetWord:
       expand(vm, i, ctx)
@@ -375,7 +387,7 @@ defType tkGetWord, evalGetWord, toStringDefault
 defType tkOperation, evalOperation, toString[Operation]
 defType tkNative, evalNative, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
-defType tkObject, evalConst, toStringDefault
+defType tkObject, evalConst, toString[ObjectHead]
 defType tkFunc, evalFunc, toStringDefault
 
 types[tkObject].find = findObject
@@ -390,10 +402,10 @@ proc createVM*(): VM =
   result.heap = cast[Heap](alloc(HeapSize * sizeof HeapLayout))
   #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
+  result.null = result.alloc None
 
-proc bootstrap*(vm: VM, natives: ObjectHead) =
-  vm.sys = vm.alloc
-  vm.sys.val.store natives
+# proc bootstrap*(vm: VM, natives: ObjectHead) =
+#   vm.sys = vm.alloc(natives)
 
 #
 # Debug
