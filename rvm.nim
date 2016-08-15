@@ -92,7 +92,9 @@ const
 # Accessors, Adapters, and Converters
 #
 
-template kind(s: HeapSlot): expr = s.val.typ.kind
+proc kind*(s: HeapSlot): TypeKind {.inline.} = s.val.typ.kind
+
+proc next*(s: HeapSlot): HeapSlot {.inline.} = s.nxt
 
 template kind(T: typedesc[Value]): expr = 
   when T is TNone:
@@ -194,8 +196,8 @@ proc toStringDefault(val: VMValue): string =
 proc `$`*(x: TNone): string {.inline.} = "none"
 
 proc `$`*(w: Word): string {.inline.} = $Symbol(w)
-
 proc `$`*(w: SetWord): string {.inline.} = $Symbol(w) & ":"
+proc `$`*(w: Operation): string {.inline.} = $Symbol(w)
 
 proc `$`*(blk: BlockHead): string =
   result = "["
@@ -224,7 +226,7 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
 #
 
 # bye bye tail calls
-proc eval*(vm: VM, code: Code, ax: var VMValue): Code =
+template eval*(vm: VM, code: Code, ax: var VMValue): expr =
   var i = code
   while true: 
     i = i.val.typ.eval(vm, i, ax)
@@ -242,16 +244,16 @@ proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
   rx = code.val
   result = code.nxt
 
-template getWord(code: Code): expr = 
+template getWord*(code: Code): expr = 
   if code.ext == nil:
-    raiseScriptError errSymNotFound, code.val
+   raiseScriptError errSymNotFound, code.val
   cast[HeapSlot](code.ext).val
 
 proc evalWord(vm: VM, code: Code, rx: var VMValue): Code =
   # echo "word: ", code.val
   vm.ax.val = code.getWord() 
   vm.ax.nxt = code.nxt
-  eval(vm, addr vm.ax, rx) # tail call
+  eval(vm, addr vm.ax, rx) 
 
 proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
   # echo "get-word: ", code.val
@@ -260,16 +262,18 @@ proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
 
 proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code =
   # echo "set-word: ", code.val
-  eval(vm, code.nxt, code.getWord()) # tail call
+  result = eval(vm, code.nxt, rx)
+  code.getWord() = rx
 
 proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
   # echo "operation: ", code.val
   # TODO: potential problem with first arg to be re-evaluated twice  
+  # we have to understand how to avoid resolutions to nulls
   vm.ax.nxt = addr vm.bx
   vm.ax.val = code.getWord() # op resolves to a function taking 2 arguments
   vm.bx.nxt = code.nxt
   vm.bx.val = rx
-  eval(vm, addr vm.ax, rx) # tail call
+  eval(vm, addr vm.ax, rx) 
 
 proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
   # echo "native: ", code.val
@@ -318,6 +322,11 @@ proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
 template bnd(vm: VM, code: Code, ctx: Code): expr = 
   code.val.typ.bindProc(vm, code, ctx)
 
+proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
+  for i in code:
+    let bnd = bnd(vm, i, ctx)
+    if bnd != nil: i.ext = bnd
+
 proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = discard
 
 proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
@@ -325,8 +334,12 @@ proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot =
   result = find(vm, ctx, sym)
   if result.nxt == nil:
     result = find(vm, vm.sys, sym)
-    if result.nxt == nil:
-      raiseScriptError errSymNotFound, code.val
+    # if result.nxt == nil:
+    #   raiseScriptError errSymNotFound, code.val
+
+proc bindBlock(vm: VM, code: Code, ctx: Code): HeapSlot =
+  result = code.nxt
+  vm.bindAll(vmcast[BlockHead](code), ctx)
 
 proc expand(vm: VM, code: Code, ctx: Code) =
   template sym(): expr = Symbol(code.val.data)
@@ -336,14 +349,6 @@ proc expand(vm: VM, code: Code, ctx: Code) =
     if sysSlot.nxt == nil:
       slot.ext = cast[HeapSlot](sym)
       slot.nxt = vm.alloc()
-
-proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
-  for i in code:
-    i.ext = bnd(vm, i, ctx)
-
-proc bindBlock(vm: VM, code: Code, ctx: Code): HeapSlot =
-  result = code.nxt
-  vm.bindAll(vmcast[BlockHead](code), ctx)
 
 proc expandAll*(vm: VM, code: BlockHead, ctx: Code)  =
   for i in code:
@@ -367,7 +372,7 @@ defType tkInt, evalConst, toString[int]
 defType tkWord, evalWord, toString[Word]
 defType tkSetWord, evalSetWord, toString[SetWord]
 defType tkGetWord, evalGetWord, toStringDefault
-defType tkOperation, evalOperation, toStringDefault
+defType tkOperation, evalOperation, toString[Operation]
 defType tkNative, evalNative, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
 defType tkObject, evalConst, toStringDefault

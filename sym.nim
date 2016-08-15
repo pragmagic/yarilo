@@ -17,6 +17,7 @@ type
     syms: cstring
     last: int
 
+{.push overflowChecks:off.}
 proc javaHash(s: cstring): int {.inline.} = 
   result = 0
   var i = 0
@@ -25,6 +26,7 @@ proc javaHash(s: cstring): int {.inline.} =
     if c == 0: break
     result = 31 * result + c
     inc i
+{.pop.}
 
 proc initSymtab(table: var SymTab) =
   table.table = cast[TabArray](alloc(MaxSymbols * sizeof(cstring)))
