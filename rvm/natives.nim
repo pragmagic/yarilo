@@ -93,7 +93,7 @@ proc makeNatives*(vm: VM): ObjectHead =
   vm.add natives, !"присовокупить", addImpl
   vm.add natives, !"отнять", subImpl
   vm.add natives, !"предыдущее", decImpl
-  vm.add natives, !"ответствуй", printImpl 
+  vm.add natives, !"ответствуй!", printImpl 
   vm.add natives, !"пока", whileImpl
   vm.add natives, !"поболее", gtImpl
   
