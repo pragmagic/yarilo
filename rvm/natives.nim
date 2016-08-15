@@ -50,18 +50,16 @@ proc whileImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
       break
 
 proc eitherImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  result = eval(vm, code, rx)
-  let cond = vmcast[BlockHead](rx)
-  result = eval(vm, result, rx)
-  let bodyThen = vmcast[BlockHead](rx)
-  result = eval(vm, result, rx)
-  let bodyElse = vmcast[BlockHead](rx)
-  var condition: VMValue
-  evalAll(vm, cond, condition)
-  if vmcast[bool](condition):
-    evalAll(vm, bodyThen, rx)
+  var condBlock, bodyThen, bodyElse: VMValue
+  result = eval(vm, code, condBlock)
+  result = eval(vm, result, bodyThen)
+  result = eval(vm, result, bodyElse)
+  var cond: VMValue
+  evalAll(vm, vmcast[BlockHead](condBlock), cond)
+  if vmcast[bool](cond):
+    evalAll(vm, vmcast[BlockHead](bodyThen), rx)
   else:
-    evalAll(vm, bodyElse, rx)
+    evalAll(vm, vmcast[BlockHead](bodyElse), rx)
 
 proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()
@@ -72,6 +70,7 @@ proc makeNatives*(vm: VM): ObjectHead =
   vm.add natives, !">", gtImpl
 
   vm.add natives, !"add", addImpl 
+  vm.add natives, !"mul", mulImpl 
   vm.add natives, !"equal", eqImpl
 
   vm.add natives, !"print", printImpl 

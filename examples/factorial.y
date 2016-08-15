@@ -1,4 +1,4 @@
 
 
-factorial: func [n] [either [n > 1] [n * factorial n - 1] [1]]
+factorial: func [n] [either [n > 1] [mul factorial n - 1 n] [1]]
 print factorial 10

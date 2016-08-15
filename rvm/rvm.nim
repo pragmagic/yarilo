@@ -79,10 +79,11 @@ type
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
   FuncHead* = distinct HeapSlot
+  Paren* = distinct HeapSlot
 
   # this goes directly to VMValue.data
   Value* = TNone | bool | int | Word | SetWord | GetWord | Operation | Native | 
-           BlockHead | ObjectHead | FuncHead
+           BlockHead | ObjectHead | FuncHead | Paren
 
 const 
   None* = TNone(0)
@@ -304,10 +305,15 @@ proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
   result = code.nxt
   for i in params:
     result = eval (vm, result, i.val)
+    vm.stack[vm.sp] = i.val
+    inc vm.sp
 #    inc vm.fp
   # echo "eval body: ", body
   evalAll(vm, body, rx)
-  #vm.restoreFrame
+
+  for i in params:
+    dec vm.sp
+    i.val = vm.stack[vm.sp]
 
 proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
   evalAll(vm, code, result)
