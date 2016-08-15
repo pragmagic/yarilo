@@ -5,7 +5,6 @@ include sym
 const 
   HeapSize = 1 shl 16
   StackSize = 1 shl 16
-  # StackFrameSize = 256
 
 type
   EvalProc = proc (vm: VM, code: Code, rx: var VMValue): HeapSlot {.nimcall.}
@@ -245,13 +244,12 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
 #
 
 # bye bye tail calls
-template eval*(vm: VM, code: Code, ax: var VMValue): expr =
-  var i = code
+proc eval*(vm: VM, code: Code, ax: var VMValue): Code {.inline.} =
+  result = code
   while true: 
-    i = i.val.typ.eval(vm, i, ax)
-    if i.val.typ.kind != tkOperation:
+    result = result.val.typ.eval(vm, result, ax)
+    if result.val.typ.kind != tkOperation:
       break
-  i
 
 proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
   var ip = HeapSlot(code)
