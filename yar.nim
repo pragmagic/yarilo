@@ -16,7 +16,8 @@ proc interpret(s: string) =
   vm.expandAll(b, user)
   vm.bindAll(b, sys)
   vm.bindAll(b, user)
-  echo "Result: ", vm.eval(b) 
+  vm.push None
+  vm.eval(b)  
 
 if paramCount() > 0: 
   interpret readFile paramStr(1)

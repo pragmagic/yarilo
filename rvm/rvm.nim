@@ -7,7 +7,7 @@ const
   StackSize = 1 shl 16
 
 type
-  EvalProc = proc (vm: VM, code: Code, rx: var VMValue): HeapSlot {.nimcall.}
+  EvalProc = proc (vm: VM, code: Code): HeapSlot {.nimcall.}
   FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
   BindProc = proc (vm: VM, code: Code, ctx: Code): HeapSlot {.nimcall.} 
 
@@ -58,7 +58,7 @@ type
     bx: HeapLayout # Register BX
     # fp: int           # current frame size
     # frame: StackFrame
-    bp, sp: int
+    sp: int
     stack: Stack 
     tail: int
     heap: Heap
@@ -75,7 +75,7 @@ type
   Word* = distinct Symbol
   SetWord* = distinct Symbol
   GetWord* = distinct Symbol
-  Native* = proc (vm: VM, rx: var VMValue) {.nimcall.}
+  Native* = proc (vm: VM) {.nimcall.}
   Operation* = distinct Symbol
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
@@ -128,11 +128,11 @@ proc vmcast*[T: Value](val: VMValue): T {.inline.} =
   assert val.typ.kind == kind(T), "actual: " & $val.typ.kind
   cast[T](val.data)
 
-proc param*(vm: VM, offset: int): ptr VMValue {.inline.} =
-  addr vm.stack[vm.bp + offset]
+proc param*(vm: VM, offset: int): var VMValue {.inline.} =
+  vm.stack[vm.sp + offset]
 
 proc vmparam*[T: Value](vm: VM, offset: int): T {.inline.} =
-  vmcast[T](vm.stack[vm.bp + offset])
+  vmcast[T](vm.stack[vm.sp + offset])
 
 template typeof(v: Value): expr =
   types[kind(type v)]
@@ -235,18 +235,28 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
 #
 # Stack
 #
+# Stack Frame:
+# .. [BP] [RX] [P1] [P2] .. [Pn] [BP] [RX] [P1] [P2] .. [Pn] [BP] <- BP [RX] <- SP - native calls
+# .. [BP] [RX] [P1] [P2] .. [Pn] [BP] [OP1] [OP2] 
 
-proc push(vm: VM, val: Value) =
-  store vm.stack[vm.sp], val
+
+proc push*(vm: VM, val: Value) =
   inc vm.sp 
+  store vm.stack[vm.sp], val
 
 proc push(vm: VM, val: VMValue) =
-  vm.stack[vm.sp] = val
   inc vm.sp 
+  vm.stack[vm.sp] = val
 
-proc pop(vm: VM): VMValue =
+proc top*(vm: VM): var VMValue = 
+  vm.stack[vm.sp]
+
+proc pop(vm: VM, val: var VMValue) =
+  val = vm.stack[vm.sp]
   dec vm.sp
-  result = vm.stack[vm.sp]
+
+proc pop(vm: VM) =
+  dec vm.sp
 
 
 #
@@ -254,21 +264,21 @@ proc pop(vm: VM): VMValue =
 #
 
 # bye bye tail calls
-proc eval*(vm: VM, code: Code, ax: var VMValue): Code {.inline.} =
+proc eval*(vm: VM, code: Code): Code {.inline.} =
   result = code
   while true: 
-    result = result.val.typ.eval(vm, result, ax)
+    result = result.val.typ.eval(vm, result)
     if result.val.typ.kind != tkOperation:
       break
 
-proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
+proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
   var ip = HeapSlot(code)
   while not ip.isNil:
-    ip = eval(vm, ip, rx)
+    ip = eval(vm, ip)
 
-proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalConst(vm: VM, code: Code): Code =
   # echo "const: ", code.val
-  rx = code.val
+  vm.top() = code.val
   result = code.nxt
 
 template getWord*(code: Code): expr = 
@@ -276,23 +286,23 @@ template getWord*(code: Code): expr =
    raiseScriptError errSymNotFound, code.val
   cast[HeapSlot](code.ext).val
 
-proc evalWord(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalWord(vm: VM, code: Code): Code =
   # echo "word: ", code.val
   vm.ax.val = code.getWord() 
   vm.ax.nxt = code.nxt
-  eval(vm, addr vm.ax, rx) 
+  eval(vm, addr vm.ax) 
 
-proc evalGetWord(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalGetWord(vm: VM, code: Code): Code =
   # echo "get-word: ", code.val
-  rx = code.getWord()
+  vm.top() = code.getWord()
   result = code.nxt
 
-proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalSetWord(vm: VM, code: Code): Code =
   # echo "set-word: ", code.val
-  result = eval(vm, code.nxt, rx)
-  code.getWord() = rx
+  result = eval(vm, code.nxt)
+  code.getWord() = vm.top()
 
-proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalOperation(vm: VM, code: Code): Code =
   # echo "operation: ", code.val
   # TODO: potential problem with first arg to be re-evaluated twice  
   # we have to understand how to avoid resolutions to nulls
@@ -301,63 +311,65 @@ proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
   # vm.bx.nxt = code.nxt
   # vm.bx.val = rx
   # eval(vm, addr vm.ax, rx)
-  let f = vmcast[Native](code.getWord())
-  vm.push vm.bp
-  vm.bp = vm.sp
+  # let f = vmcast[Native](code.getWord())
   # assuming first val is in the RX, but we need to change this
-  vm.push rx
-  var second: VMValue
-  result = eval(vm, code.nxt, second)
-  vm.push second
-  f(vm, rx)
-  discard vm.pop
-  discard vm.pop
-  vm.bp = vmcast[int](vm.pop)
+  # vm.push rx
+  # var second: VMValue
+  # result = eval(vm, code.nxt, second)
+  # vm.push second
+  # f(vm, rx)
+  # discard vm.pop
+  # discard vm.pop
+  raiseScriptError errMethodNotAllowed
 
 # proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
 #   # echo "native: ", code.val
 #   (vmcast[Native](code.val))(vm, code.nxt, rx) # tail call
 
-proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
+proc evalFunc(vm: VM, code: Code): Code =
   let head = cast[HeapSlot](code.val.data)
   let params = vmcast[ObjectHead](head.val)
   let body = vmcast[BlockHead](head.nxt.val)
 
   result = code.nxt
   for i in params:
-    result = eval (vm, result, i.val)
-    vm.stack[vm.sp] = i.val
-    inc vm.sp
+    vm.push i.val
+    vm.push None
+    result = eval (vm, result)
+    vm.pop i.val 
 
-  evalAll(vm, body, rx)
+  vm.push None
+  evalAll(vm, body)
+  var res: VMValue
+  vm.pop res
 
   for i in params:
-    dec vm.sp
-    i.val = vm.stack[vm.sp]
+    vm.pop i.val
 
-proc evalNative(vm: VM, code: Code, rx: var VMValue): Code =
+  vm.top() = res
+
+proc evalNative(vm: VM, code: Code): Code =
   let head = cast[HeapSlot](code.val.data)
   let params = vmcast[ObjectHead](head.val)
   let impl = vmcast[Native](head.nxt.val)
 
-  vm.push vm.bp 
-  vm.bp = vm.sp
-
   result = code.nxt
   for i in params:
-    var p: VMValue
-    result = eval (vm, result, p)
-    vm.push(p)
+    vm.push None
+    result = eval (vm, result)
 
-  impl(vm, rx)
+  vm.push None
+  impl(vm)
+  var res: VMValue
+  vm.pop res
 
   for i in params:
-    discard vm.pop
+    vm.pop
 
-  vm.bp = vmcast[int](vm.pop)
+  vm.top() = res
 
-proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
-  evalAll(vm, code, result)
+proc eval*(vm: VM, code: BlockHead) {.inline.} = 
+  evalAll(vm, code)
 
 #
 # Find - find symbol in structure
@@ -448,6 +460,7 @@ proc createVM*(): VM =
   result.heap = cast[Heap](alloc(HeapSize * sizeof HeapLayout))
   #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
+  result.sp = -1
   result.null = result.alloc None
 
 # proc bootstrap*(vm: VM, natives: ObjectHead) =
@@ -468,8 +481,7 @@ proc dumpHeap*(vm: VM, a, b: int) =
       toHex(pi[0], 8), " ", toHex(pi[1], 8), " - ", toHex(pi[2], 8), " ", toHex(pi[3], 8), s
 
 proc dumpStack*(vm: VM) = 
-  echo "Stack: bp: ", vm.sp 
-  for i in 0..vm.sp:
-    let pi = cast[ptr array[2, int]](addr vm.stack[i])
-    echo i, ": ", toHex(pi[0], 8), " ", toHex(pi[1], 8) 
+  echo "SP = ", vm.sp 
+  for i in 0..<vm.sp:
+    echo vm.stack[i]
 

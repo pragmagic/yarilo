@@ -3,17 +3,17 @@ import core
 import parse
 
 
-proc printImpl(vm: VM, rx: var VMValue) =
-  rx = vm.param(0)[]
-  echo "print: ", rx
+proc printImpl(vm: VM) =
+  vm.top() = vm.param(-1)
+  echo "print: ", vm.top()
 
-proc funcImpl(vm: VM, rx: var VMValue) =
-  rx.store vm.makeFunc(vmparam[BlockHead](vm, 0), vmparam[BlockHead](vm, 1))
+proc funcImpl(vm: VM) =
+  vm.top.store vm.makeFunc(vmparam[BlockHead](vm, -2), vmparam[BlockHead](vm, -1))
 
 template binOp(f: expr, T: typedesc[Value], op: expr) =
   {.push overflowChecks:off.}
-  proc f(vm: VM, rx: var VMValue) =
-    rx.store op(vmparam[T](vm, 0), vmparam[T](vm, 1))
+  proc f(vm: VM) =
+    vm.top.store op(vmparam[T](vm, -2), vmparam[T](vm, -1))
   {.pop.}
 
 binOp(addImpl, int, `+`)
@@ -30,27 +30,25 @@ binOp(gtImpl, int, `>`)
 # proc skipImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
 #   eval(vm, code, rx)
 
-proc whileImpl(vm: VM, rx: var VMValue) =
-  let cond = vmparam[BlockHead](vm, 0)
-  let body = vmparam[BlockHead](vm, 1)
+proc whileImpl(vm: VM) =
+  let cond = vmparam[BlockHead](vm, -2)
+  let body = vmparam[BlockHead](vm, -1)
   while true:
-    var condition: VMValue
-    evalAll(vm, cond, condition)
-    if vmcast[bool](condition):
-      evalAll(vm, body, rx)
+    evalAll(vm, cond)
+    if vmcast[bool](vm.top()):
+      evalAll(vm, body)
     else:
       break
 
-proc eitherImpl(vm: VM, rx: var VMValue) =
-  let blockCond = vmparam[BlockHead](vm, 0)
-  let blockThen = vmparam[BlockHead](vm, 1)
-  let blockElse = vmparam[BlockHead](vm, 2)
-  var cond: VMValue
-  evalAll(vm, blockCond, cond)
-  if vmcast[bool](cond):
-    evalAll(vm, blockThen, rx)
+proc eitherImpl(vm: VM) =
+  let blockCond = vmparam[BlockHead](vm, -3)
+  let blockThen = vmparam[BlockHead](vm, -2)
+  let blockElse = vmparam[BlockHead](vm, -1)
+  evalAll(vm, blockCond)
+  if vmcast[bool](vm.top()):
+    evalAll(vm, blockThen)
   else:
-    evalAll(vm, blockElse, rx)
+    evalAll(vm, blockElse)
 
 proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()
