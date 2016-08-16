@@ -75,8 +75,8 @@ type
   Word* = distinct Symbol
   SetWord* = distinct Symbol
   GetWord* = distinct Symbol
-  Operation* = distinct Symbol
   Native* = proc (vm: VM, rx: var VMValue) {.nimcall.}
+  Operation* = distinct Symbol
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
   FuncHead* = distinct HeapSlot
@@ -296,11 +296,23 @@ proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
   # echo "operation: ", code.val
   # TODO: potential problem with first arg to be re-evaluated twice  
   # we have to understand how to avoid resolutions to nulls
-  vm.ax.nxt = addr vm.bx
-  vm.ax.val = code.getWord() # op resolves to a function taking 2 arguments
-  vm.bx.nxt = code.nxt
-  vm.bx.val = rx
-  eval(vm, addr vm.ax, rx) 
+  # vm.ax.nxt = addr vm.bx
+  # vm.ax.val = code.getWord() # op resolves to a function taking 2 arguments
+  # vm.bx.nxt = code.nxt
+  # vm.bx.val = rx
+  # eval(vm, addr vm.ax, rx)
+  let f = vmcast[Native](code.getWord())
+  vm.push vm.bp
+  vm.bp = vm.sp
+  # assuming first val is in the RX, but we need to change this
+  vm.push rx
+  var second: VMValue
+  result = eval(vm, code.nxt, second)
+  vm.push second
+  f(vm, rx)
+  discard vm.pop
+  discard vm.pop
+  vm.bp = vmcast[int](vm.pop)
 
 # proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
 #   # echo "native: ", code.val

@@ -63,11 +63,11 @@ proc makeNatives*(vm: VM): ObjectHead =
   let TwoBlocks = vm.parse "a b"
   let Three = vm.parse "cond then else"
 
-  add "+", Two, addImpl
-  add "*", Two, mulImpl
-  add "-", Two, subImpl
-  add "=", Two, eqImpl
-  add ">", Two, gtImpl
+  vm.add natives, !"+", addImpl
+  vm.add natives, !"*", mulImpl
+  vm.add natives, !"-", subImpl
+  vm.add natives, !"=", eqImpl
+  vm.add natives, !">", gtImpl
 
   add "add", Two, addImpl
   add "mul", Two, mulImpl
