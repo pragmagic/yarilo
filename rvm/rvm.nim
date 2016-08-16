@@ -240,22 +240,22 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
 # .. [BP] [RX] [P1] [P2] .. [Pn] [BP] [OP1] [OP2] 
 
 
-proc push*(vm: VM, val: Value) =
+proc push*(vm: VM, val: Value) {.inline.} =
   inc vm.sp 
   store vm.stack[vm.sp], val
 
-proc push(vm: VM, val: VMValue) =
+proc push(vm: VM, val: VMValue) {.inline.} =
   inc vm.sp 
   vm.stack[vm.sp] = val
 
-proc top*(vm: VM): var VMValue = 
+proc top*(vm: VM): var VMValue {.inline.} = 
   vm.stack[vm.sp]
 
-proc pop(vm: VM, val: var VMValue) =
+proc pop(vm: VM, val: var VMValue) {.inline.} =
   val = vm.stack[vm.sp]
   dec vm.sp
 
-proc pop(vm: VM) =
+proc pop(vm: VM) {.inline.} =
   dec vm.sp
 
 
@@ -304,6 +304,21 @@ proc evalSetWord(vm: VM, code: Code): Code =
 
 proc evalOperation(vm: VM, code: Code): Code =
   # echo "operation: ", code.val
+
+  let f = vmcast[Native](code.getWord())
+  vm.push None
+  result = eval(vm, code.nxt)
+
+  vm.push None
+  f(vm)
+  var res: VMValue
+  vm.pop res
+
+  vm.pop # second param
+
+  vm.top() = res
+  
+
   # TODO: potential problem with first arg to be re-evaluated twice  
   # we have to understand how to avoid resolutions to nulls
   # vm.ax.nxt = addr vm.bx
@@ -311,7 +326,6 @@ proc evalOperation(vm: VM, code: Code): Code =
   # vm.bx.nxt = code.nxt
   # vm.bx.val = rx
   # eval(vm, addr vm.ax, rx)
-  # let f = vmcast[Native](code.getWord())
   # assuming first val is in the RX, but we need to change this
   # vm.push rx
   # var second: VMValue
@@ -320,7 +334,6 @@ proc evalOperation(vm: VM, code: Code): Code =
   # f(vm, rx)
   # discard vm.pop
   # discard vm.pop
-  raiseScriptError errMethodNotAllowed
 
 # proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
 #   # echo "native: ", code.val
