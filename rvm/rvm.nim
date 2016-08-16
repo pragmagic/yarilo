@@ -25,6 +25,7 @@ type
     tkBlock
     tkObject
     tkFunc
+    tkNativeFunc
 
   PType = ptr VMType
   VMType = object
@@ -57,7 +58,7 @@ type
     bx: HeapLayout # Register BX
     # fp: int           # current frame size
     # frame: StackFrame
-    sp: int
+    bp, sp: int
     stack: Stack 
     tail: int
     heap: Heap
@@ -75,15 +76,16 @@ type
   SetWord* = distinct Symbol
   GetWord* = distinct Symbol
   Operation* = distinct Symbol
-  Native* = EvalProc
+  Native* = proc (vm: VM, rx: var VMValue) {.nimcall.}
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
   FuncHead* = distinct HeapSlot
+  NativeHead* = distinct HeapSlot
   Paren* = distinct HeapSlot
 
   # this goes directly to VMValue.data
   Value* = TNone | bool | int | Word | SetWord | GetWord | Operation | Native | 
-           BlockHead | ObjectHead | FuncHead | Paren
+           BlockHead | ObjectHead | FuncHead | NativeHead | Paren
 
 const 
   None* = TNone(0)
@@ -117,19 +119,25 @@ template kind(T: typedesc[Value]): expr =
     tkObject
   elif T is FuncHead:
     tkFunc
+  elif T is NativeHead:
+    tkNativeFunc
   else:
     {.fatal: "unhandled value type".}
 
 proc vmcast*[T: Value](val: VMValue): T {.inline.} =
-  assert val.typ.kind == kind(T)
+  assert val.typ.kind == kind(T), "actual: " & $val.typ.kind
   cast[T](val.data)
 
-#proc vmcast*[T: Value](slot: HeapSlot): T {.inline.} = vmcast[T](slot.val)
+proc param*(vm: VM, offset: int): ptr VMValue {.inline.} =
+  addr vm.stack[vm.bp + offset]
+
+proc vmparam*[T: Value](vm: VM, offset: int): T {.inline.} =
+  vmcast[T](vm.stack[vm.bp + offset])
 
 template typeof(v: Value): expr =
   types[kind(type v)]
 
-template store*(val: var VMValue, v: Value) = 
+proc store*(val: var VMValue, v: Value) {.inline.} = 
   val.typ = addr typeof(v)
   val.data = cast[pointer](v) 
 
@@ -152,22 +160,6 @@ proc alloc*(vm: VM, v: Value): HeapSlot {.inline.} =
 proc alloc*(vm: VM, s: Symbol): HeapSlot {.inline.} =
   result = vm.alloc None
   result.ext = cast[HeapSlot](s)  
-
-#
-# Stack Op
-#
-
-# template saveFrame(vm: VM) =
-#   vm.frame[vm.fp].data = cast[pointer](vm.fp)
-#   inc vm.fp
-#   copyMem(addr vm.stack[vm.sp], vm.frame, vm.fp * sizeof(VMValue))
-#   inc vm.sp, vm.fp
-#   vm.fp = 0
-
-# template restoreFrame(vm: VM) =
-#   vm.fp = cast[int](vm.stack[vm.sp].data)
-#   dec vm.sp, vm.fp + 1
-#   copyMem(vm.frame, addr vm.stack[vm.sp], vm.fp * sizeof(VMValue))
 
 #
 # List Ops
@@ -241,6 +233,23 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
   raise newException(Exception, txt[code] % $val)
 
 #
+# Stack
+#
+
+proc push(vm: VM, val: Value) =
+  store vm.stack[vm.sp], val
+  inc vm.sp 
+
+proc push(vm: VM, val: VMValue) =
+  vm.stack[vm.sp] = val
+  inc vm.sp 
+
+proc pop(vm: VM): VMValue =
+  dec vm.sp
+  result = vm.stack[vm.sp]
+
+
+#
 # Eval
 #
 
@@ -293,27 +302,47 @@ proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
   vm.bx.val = rx
   eval(vm, addr vm.ax, rx) 
 
-proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
-  # echo "native: ", code.val
-  (vmcast[Native](code.val))(vm, code.nxt, rx) # tail call
+# proc evalNative(vm: VM, code: Code, rx: var VMValue): Code  =
+#   # echo "native: ", code.val
+#   (vmcast[Native](code.val))(vm, code.nxt, rx) # tail call
 
 proc evalFunc(vm: VM, code: Code, rx: var VMValue): Code =
   let head = cast[HeapSlot](code.val.data)
   let params = vmcast[ObjectHead](head.val)
   let body = vmcast[BlockHead](head.nxt.val)
-  #vm.saveFrame
+
   result = code.nxt
   for i in params:
     result = eval (vm, result, i.val)
     vm.stack[vm.sp] = i.val
     inc vm.sp
-#    inc vm.fp
-  # echo "eval body: ", body
+
   evalAll(vm, body, rx)
 
   for i in params:
     dec vm.sp
     i.val = vm.stack[vm.sp]
+
+proc evalNative(vm: VM, code: Code, rx: var VMValue): Code =
+  let head = cast[HeapSlot](code.val.data)
+  let params = vmcast[ObjectHead](head.val)
+  let impl = vmcast[Native](head.nxt.val)
+
+  vm.push vm.bp 
+  vm.bp = vm.sp
+
+  result = code.nxt
+  for i in params:
+    var p: VMValue
+    result = eval (vm, result, p)
+    vm.push(p)
+
+  impl(vm, rx)
+
+  for i in params:
+    discard vm.pop
+
+  vm.bp = vmcast[int](vm.pop)
 
 proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
   evalAll(vm, code, result)
@@ -389,10 +418,11 @@ defType tkWord, evalWord, toString[Word]
 defType tkSetWord, evalSetWord, toString[SetWord]
 defType tkGetWord, evalGetWord, toStringDefault
 defType tkOperation, evalOperation, toString[Operation]
-defType tkNative, evalNative, toStringDefault
+defType tkNative, evalConst, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
 defType tkObject, evalConst, toString[ObjectHead]
 defType tkFunc, evalFunc, toStringDefault
+defType tkNativeFunc, evalNative, toStringDefault
 
 types[tkObject].find = findObject
 

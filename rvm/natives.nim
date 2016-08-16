@@ -3,44 +3,36 @@ import core
 import parse
 
 
-proc printImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  result = eval(vm, code, rx)
-  echo rx
+proc printImpl(vm: VM, rx: var VMValue) =
+  rx = vm.param(0)[]
+  echo "print: ", rx
 
-proc funcImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  var params, body: VMValue
-  result = eval(vm, code, params)
-  result = eval(vm, result, body)
-  rx.store vm.makeFunc(vmcast[BlockHead](params), vmcast[BlockHead](body))
+proc funcImpl(vm: VM, rx: var VMValue) =
+  rx.store vm.makeFunc(vmparam[BlockHead](vm, 0), vmparam[BlockHead](vm, 1))
 
 template binOp(f: expr, T: typedesc[Value], op: expr) =
   {.push overflowChecks:off.}
-  proc f(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-    var a, b: VMValue
-    result = eval(vm, code, a)
-    result = eval(vm, result, b)
-    rx.store op(vmcast[T](a), vmcast[T](b))
+  proc f(vm: VM, rx: var VMValue) =
+    rx.store op(vmparam[T](vm, 0), vmparam[T](vm, 1))
   {.pop.}
 
-binOp(addImpl, int, `+`)  
-binOp(subImpl, int, `-`)  
-binOp(mulImpl, int, `*`)  
-binOp(eqImpl, int, `==`)  
-binOp(gtImpl, int, `>`)  
+binOp(addImpl, int, `+`)
+binOp(subImpl, int, `-`)
+binOp(mulImpl, int, `*`)
+binOp(eqImpl, int, `==`)
+binOp(gtImpl, int, `>`)
 
-proc decImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  store rx, vmcast[int](code.getWord()) - 1
-  code.getWord() = rx  
-  result = code.next
+# proc decImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
+#   store rx, vmcast[int](code.getWord()) - 1
+#   code.getWord() = rx  
+#   result = code.next
 
-proc skipImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  eval(vm, code, rx)
+# proc skipImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
+#   eval(vm, code, rx)
 
-proc whileImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  result = eval(vm, code, rx)
-  let cond = vmcast[BlockHead](rx)
-  result = eval(vm, result, rx)
-  let body = vmcast[BlockHead](rx)
+proc whileImpl(vm: VM, rx: var VMValue) =
+  let cond = vmparam[BlockHead](vm, 0)
+  let body = vmparam[BlockHead](vm, 1)
   while true:
     var condition: VMValue
     evalAll(vm, cond, condition)
@@ -49,52 +41,62 @@ proc whileImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
     else:
       break
 
-proc eitherImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
-  var condBlock, bodyThen, bodyElse: VMValue
-  result = eval(vm, code, condBlock)
-  result = eval(vm, result, bodyThen)
-  result = eval(vm, result, bodyElse)
+proc eitherImpl(vm: VM, rx: var VMValue) =
+  let blockCond = vmparam[BlockHead](vm, 0)
+  let blockThen = vmparam[BlockHead](vm, 1)
+  let blockElse = vmparam[BlockHead](vm, 2)
   var cond: VMValue
-  evalAll(vm, vmcast[BlockHead](condBlock), cond)
+  evalAll(vm, blockCond, cond)
   if vmcast[bool](cond):
-    evalAll(vm, vmcast[BlockHead](bodyThen), rx)
+    evalAll(vm, blockThen, rx)
   else:
-    evalAll(vm, vmcast[BlockHead](bodyElse), rx)
+    evalAll(vm, blockElse, rx)
 
 proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()
-  vm.add natives, !"+", addImpl
-  vm.add natives, !"*", mulImpl
-  vm.add natives, !"-", subImpl
-  vm.add natives, !"=", eqImpl
-  vm.add natives, !">", gtImpl
 
-  vm.add natives, !"add", addImpl 
-  vm.add natives, !"mul", mulImpl 
-  vm.add natives, !"equal", eqImpl
+  proc add(name: string, params: BlockHead, impl: Native) =
+    vm.add natives, !name, vm.makeFunc(params, impl)
 
-  vm.add natives, !"print", printImpl 
-  vm.add natives, !"func", funcImpl
-  vm.add natives, !"while", whileImpl
-  vm.add natives, !"either", eitherImpl
-  vm.add natives, !"dec", decImpl
+  let One = vm.parse "a"
+  let Two = vm.parse "x y"
+  let TwoBlocks = vm.parse "a b"
+  let Three = vm.parse "cond then else"
 
-  vm.add natives, !"пусть", skipImpl
-  vm.add natives, !"будетъ", skipImpl
-  vm.add natives, !"езъмь", skipImpl
-  vm.add natives, !"изначально", skipImpl
-  vm.add natives, !"к", skipImpl
-  vm.add natives, !"чем", skipImpl
-  vm.add natives, !"же", skipImpl
-  vm.add natives, !"то", skipImpl
-  vm.add natives, !"да", skipImpl
+  add "+", Two, addImpl
+  add "*", Two, mulImpl
+  add "-", Two, subImpl
+  add "=", Two, eqImpl
+  add ">", Two, gtImpl
 
-  vm.add natives, !"присовокупить", addImpl
-  vm.add natives, !"отнять", subImpl
-  vm.add natives, !"предыдущее", decImpl
-  vm.add natives, !"ответствуй!", printImpl 
-  vm.add natives, !"пока", whileImpl
-  vm.add natives, !"поболее", gtImpl
+  add "add", Two, addImpl
+  add "mul", Two, mulImpl
+  add "sub", Two, subImpl
+  add "eq", Two, eqImpl
+  add "gt", Two, gtImpl
+
+  add "print", One, printImpl 
+  add "func", TwoBlocks, funcImpl
+  add "while", TwoBlocks, whileImpl
+  add "either", Three, eitherImpl
+  # vm.add natives, !"dec", decImpl
+
+  # vm.add natives, !"пусть", skipImpl
+  # vm.add natives, !"будетъ", skipImpl
+  # vm.add natives, !"езъмь", skipImpl
+  # vm.add natives, !"изначально", skipImpl
+  # vm.add natives, !"к", skipImpl
+  # vm.add natives, !"чем", skipImpl
+  # vm.add natives, !"же", skipImpl
+  # vm.add natives, !"то", skipImpl
+  # vm.add natives, !"да", skipImpl
+
+  # vm.add natives, !"присовокупить", addImpl
+  # vm.add natives, !"отнять", subImpl
+  # vm.add natives, !"предыдущее", decImpl
+  # vm.add natives, !"ответствуй!", printImpl 
+  # vm.add natives, !"пока", whileImpl
+  # vm.add natives, !"поболее", gtImpl
   
   result = natives 
 

@@ -184,9 +184,18 @@ proc makeFunc*(vm: VM, params: BlockHead, impl: BlockHead): FuncHead =
   let body = vm.alloc impl
   let tail = vm.alloc None
   head.nxt = body
-  body.nxt = tail 
+  body.nxt = tail
   vm.bindAll(impl, head)
-  result = FuncHead(head)  
+  result = FuncHead(head)
+
+proc makeFunc*(vm: VM, params: BlockHead, impl: Native): NativeHead =
+  let localCtx = vm.locals params
+  let head = vm.alloc localCtx
+  let body = vm.alloc impl
+  let tail = vm.alloc None
+  head.nxt = body
+  body.nxt = tail
+  result = NativeHead(head)  
 
 when isMainModule:
   var vm = createVM()
