@@ -286,8 +286,8 @@ proc pop(vm: VM, val: var VMValue) {.inline.} =
   val = vm.stack[vm.sp]
   dec vm.sp
 
-proc pop(vm: VM) {.inline.} =
-  dec vm.sp
+# proc pop(vm: VM) {.inline.} =
+#   dec vm.sp
 
 proc pushIP(vm: VM, slot: HeapSlot) {.inline.} =
   inc vm.cp
@@ -301,12 +301,91 @@ proc popIP(vm: VM): HeapSlot {.inline.} =
 # Eval
 #
 
-proc eval*(vm: VM) {.inline.} =
+# defType tkNone, evalConst, toString[TNone]
+# defType tkBool, evalConst, toString[bool]
+# defType tkInt, evalConst, toString[int]
+# defType tkWord, evalUnbound, toString[Word]
+# defType tkSetWord, evalUnbound, toString[SetWord]
+# defType tkGetWord, evalUnbound, toStringDefault
+# defType tkBoundWord, evalWord, toString[Word]
+# defType tkBoundSetWord, evalSetWord, toString[SetWord]
+# defType tkBoundGetWord, evalGetWord, toStringDefault
+# defType tkOperation, evalOperation, toString[Operation]
+# defType tkNative, evalConst, toStringDefault
+# defType tkBlock, evalConst, toString[BlockHead]
+# defType tkObject, evalConst, toString[ObjectHead]
+# defType tkFunc, evalFunc, toStringDefault
+# defType tkNativeFunc, evalNative, toStringDefault
+
+proc getWord*(code: Code): var VMValue {.inline.} = 
+  cast[HeapSlot](code.ext).val
+
+proc eval*(vm: VM) {.inline.}
+proc evalAll*(vm: VM, code: BlockHead) {.inline.}
+
+proc evalDispatch(vm: VM) =
+  case vm.ip.val.typ.kind
+  of tkNone, tkInt, tkBool, tkNative, tkBlock, tkObject:
+    vm.rx = vm.ip.val
+    vm.ip = vm.ip.nxt
+  of tkWord, tkSetWord, tkGetWord:
+    raiseScriptError errSymNotFound, vm.ip.val
+  of tkBoundWord:
+    vm.ax.val = vm.ip.getWord() 
+    vm.ax.nxt = vm.ip.nxt
+    vm.ip = addr vm.ax
+    eval(vm)
+  of tkBoundGetWord:
+    vm.rx = vm.ip.getWord()
+    vm.ip = vm.ip.nxt
+  of tkBoundSetWord:
+    vm.pushIP vm.ip.ext
+    vm.ip = vm.ip.nxt
+    eval(vm)
+    vm.popIP.val = vm.rx
+  of tkOperation:
+    let f = vmcast[Native](vm.ip.getWord())
+    vm.push vm.rx
+    vm.ip = vm.ip.nxt 
+    eval(vm)
+    vm.push vm.rx
+    f(vm)
+    dec vm.sp, 2
+  of tkFunc:
+    let head = cast[HeapSlot](vm.ip.val.data)
+    vm.ip = vm.ip.nxt
+    let params = vmcast[ObjectHead](head.val)
+    let body = vmcast[BlockHead](head.nxt.val)
+    for i in params:
+      vm.push i.val
+      eval(vm)
+      i.val = vm.rx
+    evalAll(vm, body)
+    for i in params:
+      vm.pop i.val
+  of tkNativeFunc:
+    let head = cast[HeapSlot](vm.ip.val.data)
+    vm.ip = vm.ip.nxt
+    let params = vmcast[int](head.val)
+    var i = params
+    while i != 0:
+      eval(vm)
+      vm.push vm.rx 
+      dec i
+    (vmcast[Native](head.nxt.val))(vm)
+    dec vm.sp, params
+
+proc evalX*(vm: VM) {.inline.} =
   vm.ip.val.typ.eval(vm)
   if vm.ip.val.typ.kind == tkOperation:
       vm.ip.val.typ.eval(vm)
 
-proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
+proc eval*(vm: VM) =
+  evalDispatch(vm)
+  if vm.ip.val.typ.kind == tkOperation:
+      evalDispatch(vm)
+
+proc evalAll*(vm: VM, code: BlockHead) =
   vm.pushIP vm.ip
   vm.ip = HeapSlot(code)
   while not vm.ip.isNil:
@@ -319,9 +398,6 @@ proc evalConst(vm: VM) =
 
 proc evalUnbound(vm: VM) =
   raiseScriptError errSymNotFound, vm.ip.val
-
-proc getWord*(code: Code): var VMValue {.inline.} = 
-  cast[HeapSlot](code.ext).val
 
 proc evalWord(vm: VM) =
   vm.ax.val = vm.ip.getWord() 
