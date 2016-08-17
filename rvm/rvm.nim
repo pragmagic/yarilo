@@ -95,8 +95,8 @@ type
   Value* = TNone | bool | int | Word | SetWord | GetWord | Operation | Native | 
            BlockHead | ObjectHead | FuncHead | NativeHead | Paren
 
-const 
-  None* = TNone(0)
+# const 
+#   None* = TNone(0)
 
 #
 # Accessors, Adapters, and Converters
@@ -261,6 +261,10 @@ proc push*(vm: VM, val: VMValue) {.inline.} =
   inc vm.sp 
   vm.stack[vm.sp] = val
 
+proc push*(vm: VM) {.inline.} =
+  inc vm.sp 
+  vm.stack[vm.sp] = vm.none
+
 proc top*(vm: VM): var VMValue {.inline.} = 
   vm.stack[vm.sp]
 
@@ -316,14 +320,12 @@ proc evalOperation(vm: VM, code: Code): Code =
   # echo "operation: ", code.val
 
   let f = vmcast[Native](code.getWord())
-  vm.push None
+  vm.push 
   result = eval(vm, code.nxt)
-
-  vm.push None
+  vm.push
   f(vm)
   var res: VMValue
   vm.pop res
-
   vm.pop # second param
 
   vm.top() = res
@@ -337,11 +339,11 @@ proc evalFunc(vm: VM, code: Code): Code =
   result = code.nxt
   for i in params:
     vm.push i.val
-    vm.push None
+    vm.push 
     result = eval (vm, result)
     vm.pop i.val 
 
-  vm.push None
+  vm.push 
   evalAll(vm, body)
   var res: VMValue
   vm.pop res
@@ -358,10 +360,10 @@ proc evalNative(vm: VM, code: Code): Code =
 
   result = code.nxt
   for i in params:
-    vm.push None
+    vm.push 
     result = eval (vm, result)
 
-  vm.push None
+  vm.push 
   impl(vm)
   var res: VMValue
   vm.pop res
@@ -487,7 +489,7 @@ proc createVM*(): VM =
   #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
   result.sp = -1
-  store result.none, None
+  store result.none, TNone(0)
   result.null = result.alloc 
 
 # proc bootstrap*(vm: VM, natives: ObjectHead) =

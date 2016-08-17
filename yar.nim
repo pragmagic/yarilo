@@ -16,7 +16,7 @@ proc interpret(s: string) =
   vm.expandAll(b, user)
   vm.bindAll(b, sys)
   vm.bindAll(b, user)
-  vm.push None
+  vm.push 
   vm.eval(b)  
 
 if paramCount() > 0: 
