@@ -324,56 +324,69 @@ proc eval*(vm: VM) {.inline.}
 proc evalAll*(vm: VM, code: BlockHead) {.inline.}
 
 proc evalDispatch(vm: VM) =
-  case vm.ip.val.typ.kind
-  of tkNone, tkInt, tkBool, tkNative, tkBlock, tkObject:
-    vm.rx = vm.ip.val
-    vm.ip = vm.ip.nxt
-  of tkWord, tkSetWord, tkGetWord:
-    raiseScriptError errSymNotFound, vm.ip.val
-  of tkBoundWord:
-    vm.ax.val = vm.ip.getWord() 
-    vm.ax.nxt = vm.ip.nxt
-    vm.ip = addr vm.ax
-    eval(vm)
-  of tkBoundGetWord:
-    vm.rx = vm.ip.getWord()
-    vm.ip = vm.ip.nxt
-  of tkBoundSetWord:
-    vm.pushIP vm.ip.ext
-    vm.ip = vm.ip.nxt
-    eval(vm)
-    vm.popIP.val = vm.rx
-  of tkOperation:
-    let f = vmcast[Native](vm.ip.getWord())
-    vm.push vm.rx
-    vm.ip = vm.ip.nxt 
-    eval(vm)
-    vm.push vm.rx
-    f(vm)
-    dec vm.sp, 2
-  of tkFunc:
-    let head = cast[HeapSlot](vm.ip.val.data)
-    vm.ip = vm.ip.nxt
-    let params = vmcast[ObjectHead](head.val)
-    let body = vmcast[BlockHead](head.nxt.val)
-    for i in params:
-      vm.push i.val
+  while true:
+    {.computedGoto.}
+    case vm.ip.val.typ.kind
+    of tkNone, tkInt, tkBool, tkNative, tkBlock, tkObject:
+      vm.rx = vm.ip.val
+      vm.ip = vm.ip.nxt
+      break
+    of tkWord, tkSetWord, tkGetWord:
+      raiseScriptError errSymNotFound, vm.ip.val
+    of tkBoundWord:
+      vm.ax.val = vm.ip.getWord() 
+      vm.ax.nxt = vm.ip.nxt
+      vm.ip = addr vm.ax
+      #eval(vm)
+    of tkBoundGetWord:
+      vm.rx = vm.ip.getWord()
+      vm.ip = vm.ip.nxt
+      break
+    of tkBoundSetWord:
+      vm.pushIP vm.ip.ext
+      vm.ip = vm.ip.nxt
       eval(vm)
-      i.val = vm.rx
-    evalAll(vm, body)
-    for i in params:
-      vm.pop i.val
-  of tkNativeFunc:
-    let head = cast[HeapSlot](vm.ip.val.data)
-    vm.ip = vm.ip.nxt
-    let params = vmcast[int](head.val)
-    var i = params
-    while i != 0:
+      vm.popIP.val = vm.rx
+      break
+    of tkOperation:
+      let f = vmcast[Native](vm.ip.getWord())
+      vm.push vm.rx
+      vm.ip = vm.ip.nxt 
       eval(vm)
-      vm.push vm.rx 
-      dec i
-    (vmcast[Native](head.nxt.val))(vm)
-    dec vm.sp, params
+      vm.push vm.rx
+      f(vm)
+      dec vm.sp, 2
+      break
+    of tkFunc:
+      let head = cast[HeapSlot](vm.ip.val.data)
+      vm.ip = vm.ip.nxt
+      let params = vmcast[ObjectHead](head.val)
+      let body = vmcast[BlockHead](head.nxt.val)
+      for i in params:
+        vm.push i.val
+        eval(vm)
+        i.val = vm.rx
+      evalAll(vm, body)
+      for i in params:
+        vm.pop i.val
+      break
+    of tkNativeFunc:
+      let head = cast[HeapSlot](vm.ip.val.data)
+      vm.ip = vm.ip.nxt
+      let params = vmcast[int](head.val)
+      var i = params
+      while i != 0:
+        eval(vm)
+        vm.push vm.rx 
+        dec i
+      (vmcast[Native](head.nxt.val))(vm)
+      dec vm.sp, params
+      break
+  
+    # if vm.ip.val.typ.kind != tkOperation:
+    #   echo "x"
+    #   break
+
 
 proc evalX*(vm: VM) {.inline.} =
   vm.ip.val.typ.eval(vm)
