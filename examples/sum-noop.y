@@ -1,5 +1,5 @@
 sum: 0
-n: 1000000
+n: 10000000
 
 while [gt n 0] [
   sum: add sum n

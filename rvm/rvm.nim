@@ -327,8 +327,7 @@ proc evalOperation(vm: VM, code: Code): Code =
   result = eval(vm, code.nxt)
   vm.push vm.rx
   (vmcast[Native](code.getWord()))(vm)
-  vm.pop 
-  vm.pop
+  dec vm.sp, 2
   
 proc evalFunc(vm: VM, code: Code): Code =
   let head = cast[HeapSlot](code.val.data)
