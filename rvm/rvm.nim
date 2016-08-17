@@ -24,6 +24,7 @@ type
     tkBoundSetWord
     tkBoundGetWord
     tkOperation
+    tkBoundOperation
     tkNative
     tkBlock
     tkObject
@@ -90,6 +91,7 @@ type
   BoundGetWord* = distinct PValue
   Native* = proc (vm: VM) {.nimcall.}
   Operation* = distinct Symbol
+  BoundOperation* = distinct PValue
   BlockHead* = distinct HeapSlot
   ObjectHead* = distinct HeapSlot
   FuncHead* = distinct HeapSlot
@@ -303,7 +305,7 @@ proc popIP(vm: VM): HeapSlot {.inline.} =
 
 proc eval*(vm: VM) {.inline.} =
   vm.ip.val.typ.eval(vm)
-  if vm.ip.val.typ.kind == tkOperation:
+  if vm.ip.val.typ.kind == tkBoundOperation:
       vm.ip.val.typ.eval(vm)
 
 proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
@@ -437,6 +439,7 @@ proc bindOperation(vm: VM, code: Code, ctx: Code) =
   let bnd = find(vm, ctx, Symbol(code.val.data))
   if not bnd.isNil:
     code.ext = bnd
+    code.val.typ = addr types[tkBoundOperation]
 
 proc bindBlock(vm: VM, code: Code, ctx: Code) =
   vm.bindAll(vmcast[BlockHead](code.val), ctx)
@@ -473,7 +476,8 @@ defType tkGetWord, evalUnbound, toStringDefault
 defType tkBoundWord, evalWord, toString[Word]
 defType tkBoundSetWord, evalSetWord, toString[SetWord]
 defType tkBoundGetWord, evalGetWord, toStringDefault
-defType tkOperation, evalOperation, toString[Operation]
+defType tkOperation, evalUnbound, toString[Operation]
+defType tkBoundOperation, evalOperation, toString[Operation]
 defType tkNative, evalConst, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
 defType tkObject, evalConst, toString[ObjectHead]
@@ -489,6 +493,7 @@ types[tkBoundSetWord].bindProc = bindSetWord
 types[tkBlock].bindProc = bindBlock
 
 types[tkOperation].bindProc = bindOperation
+types[tkBoundOperation].bindProc = bindOperation
 
 proc createVM*(): VM =
   result = create(RVM)
