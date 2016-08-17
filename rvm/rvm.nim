@@ -58,6 +58,7 @@ type
 
   VM* = ptr RVM
   RVM = object
+    rx: VMValue
     ax: HeapLayout # Register AX
     bx: HeapLayout # Register BX
     # fp: int           # current frame size
@@ -265,8 +266,17 @@ proc push*(vm: VM) {.inline.} =
   inc vm.sp 
   vm.stack[vm.sp] = vm.none
 
-proc top*(vm: VM): var VMValue {.inline.} = 
-  vm.stack[vm.sp]
+proc result*(vm: VM, val: Value) {.inline.} =
+  store vm.rx, val
+
+proc result*(vm: VM, val: VMValue) {.inline.} =
+  vm.rx = val
+
+proc result*(vm: VM): var VMValue {.inline.} =
+  vm.rx
+
+# proc top*(vm: VM): var VMValue {.inline.} = 
+#   vm.stack[vm.sp]
 
 proc pop(vm: VM, val: var VMValue) {.inline.} =
   val = vm.stack[vm.sp]
@@ -291,7 +301,7 @@ proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
 
 proc evalConst(vm: VM, code: Code): Code =
   # echo "const: ", code.val
-  vm.top() = code.val
+  vm.rx = code.val
   result = code.nxt
 
 proc evalUnbound(vm: VM, code: Code): Code =
@@ -308,27 +318,27 @@ proc evalWord(vm: VM, code: Code): Code =
 
 proc evalGetWord(vm: VM, code: Code): Code =
   # echo "get-word: ", code.val
-  vm.top() = code.getWord()
+  vm.rx = code.getWord()
   result = code.nxt
 
 proc evalSetWord(vm: VM, code: Code): Code =
   # echo "set-word: ", code.val
   result = eval(vm, code.nxt)
-  code.getWord() = vm.top()
+  code.getWord() = vm.rx
 
 proc evalOperation(vm: VM, code: Code): Code =
   # echo "operation: ", code.val
 
-  let f = vmcast[Native](code.getWord())
-  vm.push 
+  vm.push vm.rx 
   result = eval(vm, code.nxt)
-  vm.push
+  vm.push vm.rx
+  let f = vmcast[Native](code.getWord())
   f(vm)
-  var res: VMValue
-  vm.pop res
+#  var res: VMValue
+  vm.pop 
   vm.pop # second param
 
-  vm.top() = res
+  #vm.top() = res
   
 
 proc evalFunc(vm: VM, code: Code): Code =
@@ -339,19 +349,20 @@ proc evalFunc(vm: VM, code: Code): Code =
   result = code.nxt
   for i in params:
     vm.push i.val
-    vm.push 
     result = eval (vm, result)
-    vm.pop i.val 
+    i.val = vm.rx
+#    vm.push 
+#    vm.pop i.val 
 
-  vm.push 
+  #vm.push 
   evalAll(vm, body)
-  var res: VMValue
-  vm.pop res
+#  var res: VMValue
+#  vm.pop res
 
   for i in params:
     vm.pop i.val
 
-  vm.top() = res
+ # vm.top() = res
 
 proc evalNative(vm: VM, code: Code): Code =
   let head = cast[HeapSlot](code.val.data)
@@ -360,18 +371,18 @@ proc evalNative(vm: VM, code: Code): Code =
 
   result = code.nxt
   for i in params:
-    vm.push 
     result = eval (vm, result)
+    vm.push vm.rx 
 
-  vm.push 
+  #vm.push 
   impl(vm)
-  var res: VMValue
-  vm.pop res
+  #var res: VMValue
+  #vm.pop res
 
   for i in params:
     vm.pop
 
-  vm.top() = res
+  #vm.top() = res
 
 proc eval*(vm: VM, code: BlockHead) {.inline.} = 
   evalAll(vm, code)

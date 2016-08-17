@@ -4,16 +4,16 @@ import parse
 
 
 proc printImpl(vm: VM) =
-  vm.top() = vm.param(-1)
-  echo "print: ", vm.top()
+  vm.result vm.param(0)
+  echo "print: ", vm.result
 
 proc funcImpl(vm: VM) =
-  vm.top.store vm.makeFunc(vmparam[BlockHead](vm, -2), vmparam[BlockHead](vm, -1))
+  vm.result vm.makeFunc(vmparam[BlockHead](vm, -1), vmparam[BlockHead](vm, 0))
 
 template binOp(f: expr, T: typedesc[Value], op: expr) =
   {.push overflowChecks:off.}
   proc f(vm: VM) =
-    vm.top.store op(vmparam[T](vm, -2), vmparam[T](vm, -1))
+    vm.result op(vmparam[T](vm, -1), vmparam[T](vm, 0))
   {.pop.}
 
 binOp(addImpl, int, `+`)
@@ -31,21 +31,21 @@ binOp(gtImpl, int, `>`)
 #   eval(vm, code, rx)
 
 proc whileImpl(vm: VM) =
-  let cond = vmparam[BlockHead](vm, -2)
-  let body = vmparam[BlockHead](vm, -1)
+  let cond = vmparam[BlockHead](vm, -1)
+  let body = vmparam[BlockHead](vm, 0)
   while true:
     evalAll(vm, cond)
-    if vmcast[bool](vm.top()):
+    if vmcast[bool](vm.result):
       evalAll(vm, body)
     else:
       break
 
 proc eitherImpl(vm: VM) =
-  let blockCond = vmparam[BlockHead](vm, -3)
-  let blockThen = vmparam[BlockHead](vm, -2)
-  let blockElse = vmparam[BlockHead](vm, -1)
+  let blockCond = vmparam[BlockHead](vm, -2)
+  let blockThen = vmparam[BlockHead](vm, -1)
+  let blockElse = vmparam[BlockHead](vm, 0)
   evalAll(vm, blockCond)
-  if vmcast[bool](vm.top()):
+  if vmcast[bool](vm.result):
     evalAll(vm, blockThen)
   else:
     evalAll(vm, blockElse)
