@@ -323,7 +323,7 @@ proc evalUnbound(vm: VM) =
   raiseScriptError errSymNotFound, vm.ip.val
 
 proc getWord*(code: Code): var VMValue {.inline.} = 
-  cast[HeapSlot](code.ext).val
+  cast[HeapSlot](code.val.data).val
 
 proc evalWord(vm: VM) =
   vm.ax.val = vm.ip.getWord() 
@@ -336,7 +336,7 @@ proc evalGetWord(vm: VM) =
   vm.ip = vm.ip.nxt
 
 proc evalSetWord(vm: VM) =
-  vm.pushIP vm.ip.ext
+  vm.pushIP cast[HeapSlot](vm.ip.val.data)
   vm.ip = vm.ip.nxt
   eval(vm)
   vm.popIP.val = vm.rx
@@ -420,26 +420,46 @@ proc bindDefault(vm: VM, code: Code, ctx: Code) = discard
 proc bindWord(vm: VM, code: Code, ctx: Code) = 
   let bnd = find(vm, ctx, Symbol(code.val.data))
   if not bnd.isNil:
-    code.ext = bnd
+    code.val.data = bnd
     code.val.typ = addr types[tkBoundWord]
 
 proc bindSetWord(vm: VM, code: Code, ctx: Code) = 
   let bnd = find(vm, ctx, Symbol(code.val.data))
   if not bnd.isNil:
-    code.ext = bnd
+    code.val.data = bnd
     code.val.typ = addr types[tkBoundSetWord]
 
 proc bindGetWord(vm: VM, code: Code, ctx: Code) = 
   let bnd = find(vm, ctx, Symbol(code.val.data))
   if not bnd.isNil:
-    code.ext = bnd
+    code.val.data = bnd
     code.val.typ = addr types[tkBoundGetWord]
 
 proc bindOperation(vm: VM, code: Code, ctx: Code) = 
   let bnd = find(vm, ctx, Symbol(code.val.data))
   if not bnd.isNil:
-    code.ext = bnd
+    code.val.data = bnd
     code.val.typ = addr types[tkBoundOperation]
+
+proc rebindWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(cast[HeapSlot](code.val.data).ext))
+  if not bnd.isNil:
+    code.val.data = bnd
+
+proc rebindSetWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(cast[HeapSlot](code.val.data).ext))
+  if not bnd.isNil:
+    code.val.data = bnd
+
+proc rebindGetWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(cast[HeapSlot](code.val.data).ext))
+  if not bnd.isNil:
+    code.val.data = bnd
+
+proc rebindOperation(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(cast[HeapSlot](code.val.data).ext))
+  if not bnd.isNil:
+    code.val.data = bnd
 
 proc bindBlock(vm: VM, code: Code, ctx: Code) =
   vm.bindAll(vmcast[BlockHead](code.val), ctx)
@@ -488,12 +508,14 @@ types[tkObject].find = findObject
 
 types[tkWord].bindProc = bindWord
 types[tkSetWord].bindProc = bindSetWord
-types[tkBoundWord].bindProc = bindWord
-types[tkBoundSetWord].bindProc = bindSetWord
-types[tkBlock].bindProc = bindBlock
+
+types[tkBoundWord].bindProc = rebindWord
+types[tkBoundSetWord].bindProc = rebindSetWord
 
 types[tkOperation].bindProc = bindOperation
-types[tkBoundOperation].bindProc = bindOperation
+types[tkBoundOperation].bindProc = rebindOperation
+
+types[tkBlock].bindProc = bindBlock
 
 proc createVM*(): VM =
   result = create(RVM)
