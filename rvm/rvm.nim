@@ -7,7 +7,7 @@ const
   StackSize = 1 shl 16
 
 type
-  EvalProc = proc (vm: VM, code: Code): HeapSlot {.nimcall.}
+  EvalProc = proc (vm: VM) {.nimcall.}
   FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
   BindProc = proc (vm: VM, code: Code, ctx: Code) {.nimcall.} 
 
@@ -58,6 +58,7 @@ type
 
   VM* = ptr RVM
   RVM = object
+    ip: Code
     rx: VMValue
     sp: int
     stack: Stack 
@@ -289,55 +290,65 @@ proc pop(vm: VM) {.inline.} =
 # Eval
 #
 
-proc eval*(vm: VM, code: Code): Code {.inline.} =
-  result = code.val.typ.eval(vm, code)
-  if result.val.typ.kind == tkOperation:
-      result = result.val.typ.eval(vm, result)
+proc eval*(vm: VM) {.inline.} =
+  vm.ip.val.typ.eval(vm)
+  if vm.ip.val.typ.kind == tkOperation:
+      vm.ip.val.typ.eval(vm)
 
 proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
-  var ip = HeapSlot(code)
-  while not ip.isNil:
-    ip = eval(vm, ip)
+  vm.push cast[int](vm.ip)
+  vm.ip = HeapSlot(code)
+  while not vm.ip.isNil:
+    eval(vm)
+  vm.ip = cast[Code](vmcast[int](vm.stack[vm.sp]))
+  vm.pop
 
-proc evalConst(vm: VM, code: Code): Code =
-  vm.rx = code.val
-  result = code.nxt
+proc evalConst(vm: VM) =
+  vm.rx = vm.ip.val
+  vm.ip = vm.ip.nxt
 
-proc evalUnbound(vm: VM, code: Code): Code =
-  raiseScriptError errSymNotFound, code.val
+proc evalUnbound(vm: VM) =
+  raiseScriptError errSymNotFound, vm.ip.val
 
-template getWord*(code: Code): expr = 
+proc getWord*(code: Code): var VMValue {.inline.} = 
   cast[HeapSlot](code.ext).val
 
-proc evalWord(vm: VM, code: Code): Code =
-  vm.ax.val = code.getWord() 
-  vm.ax.nxt = code.nxt
-  eval(vm, addr vm.ax) 
+proc evalWord(vm: VM) =
+  vm.ax.val = vm.ip.getWord() 
+  vm.ax.nxt = vm.ip.nxt
+  vm.ip = addr vm.ax
+  eval(vm) 
 
-proc evalGetWord(vm: VM, code: Code): Code =
-  vm.rx = code.getWord()
-  result = code.nxt
+proc evalGetWord(vm: VM) =
+  vm.rx = vm.ip.getWord()
+  vm.ip = vm.ip.nxt
 
-proc evalSetWord(vm: VM, code: Code): Code =
-  result = eval(vm, code.nxt)
-  code.getWord() = vm.rx
+proc evalSetWord(vm: VM) =
+  vm.push cast[int](vm.ip.ext)
+  vm.ip = vm.ip.nxt
+  eval(vm)
+  cast[HeapSlot](vmcast[int](vm.stack[vm.sp])).val = vm.rx
+  vm.pop
 
-proc evalOperation(vm: VM, code: Code): Code =
-  vm.push vm.rx 
-  result = eval(vm, code.nxt)
+proc evalOperation(vm: VM) =
+  let f = vmcast[Native](vm.ip.getWord())
   vm.push vm.rx
-  (vmcast[Native](code.getWord()))(vm)
+  vm.ip = vm.ip.nxt 
+  eval(vm)
+  vm.push vm.rx
+  f(vm)
   dec vm.sp, 2
   
-proc evalFunc(vm: VM, code: Code): Code =
-  let head = cast[HeapSlot](code.val.data)
+proc evalFunc(vm: VM) =
+  let head = cast[HeapSlot](vm.ip.val.data)
+  vm.ip = vm.ip.nxt
+
   let params = vmcast[ObjectHead](head.val)
   let body = vmcast[BlockHead](head.nxt.val)
 
-  result = code.nxt
   for i in params:
     vm.push i.val
-    result = eval (vm, result)
+    eval(vm)
     i.val = vm.rx
 
   evalAll(vm, body)
@@ -346,14 +357,14 @@ proc evalFunc(vm: VM, code: Code): Code =
     vm.pop i.val
 
 
-proc evalNative(vm: VM, code: Code): Code =
-  let head = cast[HeapSlot](code.val.data)
+proc evalNative(vm: VM) =
+  let head = cast[HeapSlot](vm.ip.val.data)
+  vm.ip = vm.ip.nxt
+  
   let params = vmcast[int](head.val)
-
-  result = code.nxt
   var i = params
   while i != 0:
-    result = eval (vm, result)
+    eval(vm)
     vm.push vm.rx 
     dec i
 
