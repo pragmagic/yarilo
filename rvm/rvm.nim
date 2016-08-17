@@ -9,7 +9,7 @@ const
 type
   EvalProc = proc (vm: VM, code: Code, rx: var VMValue): HeapSlot {.nimcall.}
   FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
-  BindProc = proc (vm: VM, code: Code, ctx: Code): HeapSlot {.nimcall.} 
+  BindProc = proc (vm: VM, code: Code, ctx: Code) {.nimcall.} 
 
   ToStringProc = proc(val: VMValue): string {.nimcall.}
 
@@ -20,6 +20,9 @@ type
     tkWord
     tkSetWord
     tkGetWord
+    tkBoundWord
+    tkBoundSetWord
+    tkBoundGetWord
     tkOperation
     tkNative
     tkBlock
@@ -36,6 +39,7 @@ type
 
     kind: TypeKind
   
+  PValue = ptr VMValue
   VMValue* = object
     typ: PType
     data: pointer
@@ -64,6 +68,7 @@ type
     heap: Heap
     
     null: HeapSlot
+    none: VMValue
 
 var types: array[TypeKind, VMType]
 
@@ -75,6 +80,9 @@ type
   Word* = distinct Symbol
   SetWord* = distinct Symbol
   GetWord* = distinct Symbol
+  BoundWord* = distinct PValue 
+  BoundSetWord* = distinct PValue
+  BoundGetWord* = distinct PValue
   Native* = proc (vm: VM, rx: var VMValue) {.nimcall.}
   Operation* = distinct Symbol
   BlockHead* = distinct HeapSlot
@@ -141,7 +149,7 @@ proc store*(val: var VMValue, v: Value) {.inline.} =
   val.typ = addr typeof(v)
   val.data = cast[pointer](v) 
 
-template isNil(slot: HeapSlot): expr = slot.nxt == nil
+proc isNil(slot: HeapSlot): bool {.inline.} = slot.nxt == nil
 
 #
 # Heap Operations
@@ -152,13 +160,18 @@ template isNil(slot: HeapSlot): expr = slot.nxt == nil
 #   inc vm.tail
 #   slot
 
+proc alloc*(vm: VM): HeapSlot {.inline.} = 
+  result = addr vm.heap[vm.tail]
+  result.val = vm.none
+  inc vm.tail
+
 proc alloc*(vm: VM, v: Value): HeapSlot {.inline.} = 
   result = addr vm.heap[vm.tail]
   store result.val, v
   inc vm.tail
 
 proc alloc*(vm: VM, s: Symbol): HeapSlot {.inline.} =
-  result = vm.alloc None
+  result = vm.alloc
   result.ext = cast[HeapSlot](s)  
 
 #
@@ -236,30 +249,37 @@ proc raiseScriptError*(code: ErrCode, val: VMValue) {.noinline.} =
 # Stack
 #
 
-proc push(vm: VM, val: Value) =
+proc push(vm: VM, val: Value) {.inline.} =
   store vm.stack[vm.sp], val
   inc vm.sp 
 
-proc push(vm: VM, val: VMValue) =
+proc push(vm: VM, val: VMValue) {.inline.} =
   vm.stack[vm.sp] = val
   inc vm.sp 
 
-proc pop(vm: VM): VMValue =
+proc pop(vm: VM): VMValue {.inline.} =
   dec vm.sp
   result = vm.stack[vm.sp]
-
 
 #
 # Eval
 #
 
 # bye bye tail calls
+# proc eval*(vm: VM, code: Code, ax: var VMValue): Code =
+#   result = code
+#   while true: 
+#     result = result.val.typ.eval(vm, result, ax)
+#     if result.val.typ.kind != tkOperation:
+#       break
+
 proc eval*(vm: VM, code: Code, ax: var VMValue): Code {.inline.} =
-  result = code
-  while true: 
-    result = result.val.typ.eval(vm, result, ax)
-    if result.val.typ.kind != tkOperation:
-      break
+  result = code.val.typ.eval(vm, code, ax)
+  if result.val.typ.kind == tkOperation:
+      result = result.val.typ.eval(vm, result, ax)
+
+# var xx: VMValue
+# discard eval2(nil, nil, xx)
 
 proc evalAll*(vm: VM, code: BlockHead, rx: var VMValue) {.inline.} =
   var ip = HeapSlot(code)
@@ -271,9 +291,10 @@ proc evalConst(vm: VM, code: Code, rx: var VMValue): Code =
   rx = code.val
   result = code.nxt
 
+proc evalUnbound(vm: VM, code: Code, rx: var VMValue): Code =
+  raiseScriptError errSymNotFound, code.val
+
 template getWord*(code: Code): expr = 
-  if code.ext == nil:
-   raiseScriptError errSymNotFound, code.val
   cast[HeapSlot](code.ext).val
 
 proc evalWord(vm: VM, code: Code, rx: var VMValue): Code =
@@ -293,14 +314,6 @@ proc evalSetWord(vm: VM, code: Code, rx: var VMValue): Code =
   code.getWord() = rx
 
 proc evalOperation(vm: VM, code: Code, rx: var VMValue): Code =
-  # echo "operation: ", code.val
-  # TODO: potential problem with first arg to be re-evaluated twice  
-  # we have to understand how to avoid resolutions to nulls
-  # vm.ax.nxt = addr vm.bx
-  # vm.ax.val = code.getWord() # op resolves to a function taking 2 arguments
-  # vm.bx.nxt = code.nxt
-  # vm.bx.val = rx
-  # eval(vm, addr vm.ax, rx)
   let f = vmcast[Native](code.getWord())
   vm.push vm.bp
   vm.bp = vm.sp
@@ -382,22 +395,39 @@ proc findObject(vm: VM, code: Code, s: Symbol): HeapSlot =
 # Bindings
 #
 
-proc bnd(vm: VM, code: Code, ctx: Code): HeapSlot {.inline.} = 
+proc bnd(vm: VM, code: Code, ctx: Code) {.inline.} = 
   code.val.typ.bindProc(vm, code, ctx)
 
 proc bindAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
   for i in code:
-    let bnd = bnd(vm, i, ctx)
-    if not bnd.isNil:
-      i.ext = bnd
+    bnd(vm, i, ctx)
 
-proc bindDefault(vm: VM, code: Code, ctx: Code): HeapSlot = vm.null
+proc bindDefault(vm: VM, code: Code, ctx: Code) = discard
 
-proc bindWord(vm: VM, code: Code, ctx: Code): HeapSlot = 
-  find(vm, ctx, Symbol(code.val.data))
+proc bindWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(code.val.data))
+  if not bnd.isNil:
+    code.ext = bnd
+    code.val.typ = addr types[tkBoundWord]
 
-proc bindBlock(vm: VM, code: Code, ctx: Code): HeapSlot =
-  result = vm.null
+proc bindSetWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(code.val.data))
+  if not bnd.isNil:
+    code.ext = bnd
+    code.val.typ = addr types[tkBoundSetWord]
+
+proc bindGetWord(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(code.val.data))
+  if not bnd.isNil:
+    code.ext = bnd
+    code.val.typ = addr types[tkBoundGetWord]
+
+proc bindOperation(vm: VM, code: Code, ctx: Code) = 
+  let bnd = find(vm, ctx, Symbol(code.val.data))
+  if not bnd.isNil:
+    code.ext = bnd
+
+proc bindBlock(vm: VM, code: Code, ctx: Code) =
   vm.bindAll(vmcast[BlockHead](code.val), ctx)
 
 proc expand(vm: VM, code: Code, ctx: Code) {.inline.} =
@@ -405,7 +435,7 @@ proc expand(vm: VM, code: Code, ctx: Code) {.inline.} =
   let slot = find(vm, ctx, sym)
   if slot.nxt == nil:
     slot.ext = cast[HeapSlot](sym)
-    slot.nxt = vm.alloc(None)
+    slot.nxt = vm.alloc()
 
 proc expandAll*(vm: VM, code: BlockHead, ctx: Code) {.inline.} =
   for i in code:
@@ -426,9 +456,12 @@ template defType(knd: TypeKind, ev: EvalProc, str: ToStringProc) =
 defType tkNone, evalConst, toString[TNone]
 defType tkBool, evalConst, toString[bool]
 defType tkInt, evalConst, toString[int]
-defType tkWord, evalWord, toString[Word]
-defType tkSetWord, evalSetWord, toString[SetWord]
-defType tkGetWord, evalGetWord, toStringDefault
+defType tkWord, evalUnbound, toString[Word]
+defType tkSetWord, evalUnbound, toString[SetWord]
+defType tkGetWord, evalUnbound, toStringDefault
+defType tkBoundWord, evalWord, toString[Word]
+defType tkBoundSetWord, evalSetWord, toString[SetWord]
+defType tkBoundGetWord, evalGetWord, toStringDefault
 defType tkOperation, evalOperation, toString[Operation]
 defType tkNative, evalConst, toStringDefault
 defType tkBlock, evalConst, toString[BlockHead]
@@ -439,16 +472,20 @@ defType tkNativeFunc, evalNative, toStringDefault
 types[tkObject].find = findObject
 
 types[tkWord].bindProc = bindWord
-types[tkSetWord].bindProc = bindWord
-types[tkOperation].bindProc = bindWord
+types[tkSetWord].bindProc = bindSetWord
+types[tkBoundWord].bindProc = bindWord
+types[tkBoundSetWord].bindProc = bindSetWord
 types[tkBlock].bindProc = bindBlock
+
+types[tkOperation].bindProc = bindOperation
 
 proc createVM*(): VM =
   result = create(RVM)
   result.heap = cast[Heap](alloc(HeapSize * sizeof HeapLayout))
   #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
-  result.null = result.alloc None
+  store result.none, None
+  result.null = result.alloc 
 
 # proc bootstrap*(vm: VM, natives: ObjectHead) =
 #   vm.sys = vm.alloc(natives)
