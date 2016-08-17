@@ -52,6 +52,7 @@ type
 
   Heap = ptr array[HeapSize, HeapLayout]
   Stack = ptr array[StackSize, VMValue]
+  CallStack = ptr array[StackSize, HeapSlot]
   # StackFrame = ptr array[StackFrameSize, VMValue]
 
   Code = HeapSlot
@@ -62,6 +63,8 @@ type
     rx: VMValue
     sp: int
     stack: Stack 
+    cp: int
+    callStack: CallStack
     tail: int
     heap: Heap
     ax: HeapLayout # Register AX
@@ -286,6 +289,14 @@ proc pop(vm: VM, val: var VMValue) {.inline.} =
 proc pop(vm: VM) {.inline.} =
   dec vm.sp
 
+proc pushIP(vm: VM, slot: HeapSlot) {.inline.} =
+  inc vm.cp
+  vm.callStack[vm.cp] = slot
+
+proc popIP(vm: VM): HeapSlot {.inline.} =
+  result = vm.callStack[vm.cp]
+  dec vm.cp
+
 #
 # Eval
 #
@@ -296,12 +307,11 @@ proc eval*(vm: VM) {.inline.} =
       vm.ip.val.typ.eval(vm)
 
 proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
-  vm.push cast[int](vm.ip)
+  vm.pushIP vm.ip
   vm.ip = HeapSlot(code)
   while not vm.ip.isNil:
     eval(vm)
-  vm.ip = cast[Code](vmcast[int](vm.stack[vm.sp]))
-  vm.pop
+  vm.ip = vm.popIP
 
 proc evalConst(vm: VM) =
   vm.rx = vm.ip.val
@@ -324,11 +334,10 @@ proc evalGetWord(vm: VM) =
   vm.ip = vm.ip.nxt
 
 proc evalSetWord(vm: VM) =
-  vm.push cast[int](vm.ip.ext)
+  vm.pushIP vm.ip.ext
   vm.ip = vm.ip.nxt
   eval(vm)
-  cast[HeapSlot](vmcast[int](vm.stack[vm.sp])).val = vm.rx
-  vm.pop
+  vm.popIP.val = vm.rx
 
 proc evalOperation(vm: VM) =
   let f = vmcast[Native](vm.ip.getWord())
@@ -487,6 +496,8 @@ proc createVM*(): VM =
   #result.frame = cast[StackFrame](alloc(StackFrameSize * sizeof VMValue))
   result.stack = cast[Stack](alloc(StackSize * sizeof VMValue))
   result.sp = -1
+  result.callStack = cast[CallStack](alloc(StackSize * sizeof HeapSlot))
+  result.cp = -1
   store result.none, TNone(0)
   result.null = result.alloc 
 
