@@ -312,7 +312,8 @@ template getWord*(code: Code): expr =
 proc evalWord(vm: VM, code: Code): Code =
   vm.ax.val = code.getWord() 
   vm.ax.nxt = code.nxt
-  eval(vm, addr vm.ax) 
+  vm.ax.val.typ.eval(vm, addr vm.ax) 
+  #eval(vm, addr vm.ax) 
 
 proc evalGetWord(vm: VM, code: Code): Code =
   vm.rx = code.getWord()
