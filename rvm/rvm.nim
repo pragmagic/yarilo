@@ -59,14 +59,14 @@ type
   VM* = ptr RVM
   RVM = object
     rx: VMValue
-    ax: HeapLayout # Register AX
-    bx: HeapLayout # Register BX
-    # fp: int           # current frame size
-    # frame: StackFrame
     sp: int
     stack: Stack 
     tail: int
     heap: Heap
+    ax: HeapLayout # Register AX
+    bx: HeapLayout # Register BX
+    # fp: int           # current frame size
+    # frame: StackFrame
     
     null: HeapSlot
     none: VMValue
@@ -349,18 +349,17 @@ proc evalFunc(vm: VM, code: Code): Code =
 
 proc evalNative(vm: VM, code: Code): Code =
   let head = cast[HeapSlot](code.val.data)
-  let params = vmcast[ObjectHead](head.val)
-  let impl = vmcast[Native](head.nxt.val)
+  let params = vmcast[int](head.val)
 
   result = code.nxt
-  for i in params:
+  var i = params
+  while i != 0:
     result = eval (vm, result)
     vm.push vm.rx 
+    dec i
 
-  impl(vm)
-
-  for i in params:
-    vm.pop
+  (vmcast[Native](head.nxt.val))(vm)
+  dec vm.sp, params
 
 proc eval*(vm: VM, code: BlockHead) {.inline.} = 
   evalAll(vm, code)

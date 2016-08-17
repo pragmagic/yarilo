@@ -53,13 +53,12 @@ proc eitherImpl(vm: VM) =
 proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()
 
-  proc add(name: string, params: BlockHead, impl: Native) =
+  proc add(name: string, params: int, impl: Native) =
     vm.add natives, !name, vm.makeFunc(params, impl)
 
-  let One = vm.parse "a"
-  let Two = vm.parse "x y"
-  let TwoBlocks = vm.parse "a b"
-  let Three = vm.parse "cond then else"
+  let One = 1
+  let Two = 2
+  let Three = 3
 
   vm.add natives, !"+", addImpl
   vm.add natives, !"*", mulImpl
@@ -74,8 +73,8 @@ proc makeNatives*(vm: VM): ObjectHead =
   add "gt", Two, gtImpl
 
   add "print", One, printImpl 
-  add "func", TwoBlocks, funcImpl
-  add "while", TwoBlocks, whileImpl
+  add "func", Two, funcImpl
+  add "while", Two, whileImpl
   add "either", Three, eitherImpl
   # vm.add natives, !"dec", decImpl
 

@@ -191,9 +191,8 @@ proc makeFunc*(vm: VM, params: BlockHead, impl: BlockHead): FuncHead =
   vm.bindAll(impl, head)
   result = FuncHead(head)
 
-proc makeFunc*(vm: VM, params: BlockHead, impl: Native): NativeHead =
-  let localCtx = vm.locals params
-  let head = vm.alloc localCtx
+proc makeFunc*(vm: VM, params: int, impl: Native): NativeHead =
+  let head = vm.alloc params
   let body = vm.alloc impl
   let tail = vm.alloc 
   head.nxt = body
