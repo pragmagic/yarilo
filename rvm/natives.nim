@@ -3,24 +3,30 @@ import core
 import parse
 
 
-proc printImpl(vm: VM) =
-  vm.result vm.param(0)
-  echo "print: ", vm.result
+proc printImpl(vm: VM): VMValue =
+  result = vm.param(0)
+  echo "print: ", result
 
-proc funcImpl(vm: VM) =
-  vm.result vm.makeFunc(vmparam[BlockHead](vm, -1), vmparam[BlockHead](vm, 0))
+proc funcImpl(vm: VM): VMValue =
+  store result, vm.makeFunc(vmparam[BlockHead](vm, -1), vmparam[BlockHead](vm, 0))
 
-template binOp(f: expr, T: typedesc[Value], op: expr) =
-  {.push overflowChecks:off.}
-  proc f(vm: VM) =
-    vm.result op(vmparam[T](vm, -1), vmparam[T](vm, 0))
-  {.pop.}
+{.push overflowChecks:off.}
+proc addImpl(vm: VM): VMValue =
+  store result, vmparam[int](vm, -1) + vmparam[int](vm, 0)
 
-binOp(addImpl, int, `+`)
-binOp(subImpl, int, `-`)
-binOp(mulImpl, int, `*`)
-binOp(eqImpl, int, `==`)
-binOp(gtImpl, int, `>`)
+proc subImpl(vm: VM): VMValue =
+  store result, vmparam[int](vm, -1) - vmparam[int](vm, 0)
+
+proc mulImpl(vm: VM): VMValue =
+  store result, vmparam[int](vm, -1) * vmparam[int](vm, 0)
+
+proc eqImpl(vm: VM): VMValue =
+  store result, vmparam[int](vm, -1) == vmparam[int](vm, 0)
+
+proc gtImpl(vm: VM): VMValue =
+  store result, vmparam[int](vm, -1) > vmparam[int](vm, 0)
+{.pop.}
+
 
 # proc decImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
 #   store rx, vmcast[int](code.getWord()) - 1
@@ -30,25 +36,23 @@ binOp(gtImpl, int, `>`)
 # proc skipImpl(vm: VM, code: HeapSlot, rx: var VMValue): HeapSlot =
 #   eval(vm, code, rx)
 
-proc whileImpl(vm: VM) =
+proc whileImpl(vm: VM): VMValue =
   let cond = vmparam[BlockHead](vm, -1)
   let body = vmparam[BlockHead](vm, 0)
   while true:
-    evalAll(vm, cond)
-    if vmcast[bool](vm.result):
-      evalAll(vm, body)
+    if vmcast[bool](evalAll(vm, cond)):
+      result = evalAll(vm, body)
     else:
       break
 
-proc eitherImpl(vm: VM) =
+proc eitherImpl(vm: VM): VMValue =
   let blockCond = vmparam[BlockHead](vm, -2)
   let blockThen = vmparam[BlockHead](vm, -1)
   let blockElse = vmparam[BlockHead](vm, 0)
-  evalAll(vm, blockCond)
-  if vmcast[bool](vm.result):
-    evalAll(vm, blockThen)
+  if vmcast[bool](evalAll(vm, blockCond)):
+    result = evalAll(vm, blockThen)
   else:
-    evalAll(vm, blockElse)
+    result = evalAll(vm, blockElse)
 
 proc makeNatives*(vm: VM): ObjectHead =
   var natives = vm.makeObject()

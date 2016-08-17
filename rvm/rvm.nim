@@ -7,7 +7,7 @@ const
   StackSize = 1 shl 16
 
 type
-  EvalProc = proc (vm: VM) {.nimcall.}
+  EvalProc = proc (vm: VM): VMValue {.nimcall.}
   FindProc = proc (vm: VM, code: Code, s: Symbol): HeapSlot {.nimcall.}  
   BindProc = proc (vm: VM, code: Code, ctx: Code) {.nimcall.} 
 
@@ -61,7 +61,7 @@ type
   VM* = ptr RVM
   RVM = object
     ip: Code
-    rx: VMValue
+    opx: VMValue
     sp: int
     stack: Stack 
     cp: int
@@ -89,7 +89,7 @@ type
   BoundWord* = distinct PValue 
   BoundSetWord* = distinct PValue
   BoundGetWord* = distinct PValue
-  Native* = proc (vm: VM) {.nimcall.}
+  Native* = proc (vm: VM): VMValue {.nimcall.}
   Operation* = distinct Symbol
   BoundOperation* = distinct PValue
   BlockHead* = distinct HeapSlot
@@ -272,14 +272,14 @@ proc push*(vm: VM) {.inline.} =
   inc vm.sp 
   vm.stack[vm.sp] = vm.none
 
-proc result*(vm: VM, val: Value) {.inline.} =
-  store vm.rx, val
+# proc result*(vm: VM, val: Value) {.inline.} =
+#   store vm.rx, val
 
-proc result*(vm: VM, val: VMValue) {.inline.} =
-  vm.rx = val
+# proc result*(vm: VM, val: VMValue) {.inline.} =
+#   vm.rx = val
 
-proc result*(vm: VM): var VMValue {.inline.} =
-  vm.rx
+# proc result*(vm: VM): var VMValue {.inline.} =
+#   vm.rx
 
 # proc top*(vm: VM): var VMValue {.inline.} = 
 #   vm.stack[vm.sp]
@@ -303,54 +303,54 @@ proc popIP(vm: VM): HeapSlot {.inline.} =
 # Eval
 #
 
-proc eval*(vm: VM) {.inline.} =
-  vm.ip.val.typ.eval(vm)
+proc eval*(vm: VM): VMValue {.inline.} =
+  result = vm.ip.val.typ.eval(vm)
   if vm.ip.val.typ.kind == tkBoundOperation:
-      vm.ip.val.typ.eval(vm)
+    vm.opx = result
+    result = vm.ip.val.typ.eval(vm)
 
-proc evalAll*(vm: VM, code: BlockHead) {.inline.} =
+proc evalAll*(vm: VM, code: BlockHead): VMValue {.inline.} =
   vm.pushIP vm.ip
   vm.ip = HeapSlot(code)
   while not vm.ip.isNil:
-    eval(vm)
+    result = eval(vm)
   vm.ip = vm.popIP
 
-proc evalConst(vm: VM) =
-  vm.rx = vm.ip.val
+proc evalConst(vm: VM): VMValue =
+  result = vm.ip.val
   vm.ip = vm.ip.nxt
 
-proc evalUnbound(vm: VM) =
+proc evalUnbound(vm: VM): VMValue =
   raiseScriptError errSymNotFound, vm.ip.val
 
 proc getWord*(code: Code): var VMValue {.inline.} = 
   cast[HeapSlot](code.val.data).val
 
-proc evalWord(vm: VM) =
+proc evalWord(vm: VM): VMValue =
   vm.ax.val = vm.ip.getWord() 
   vm.ax.nxt = vm.ip.nxt
   vm.ip = addr vm.ax
-  eval(vm) 
+  result = vm.ip.val.typ.eval(vm)
 
-proc evalGetWord(vm: VM) =
-  vm.rx = vm.ip.getWord()
+proc evalGetWord(vm: VM): VMValue =
+  result = vm.ip.getWord()
   vm.ip = vm.ip.nxt
 
-proc evalSetWord(vm: VM) =
+proc evalSetWord(vm: VM): VMValue =
   vm.pushIP cast[HeapSlot](vm.ip.val.data)
   vm.ip = vm.ip.nxt
-  eval(vm)
-  vm.popIP.val = vm.rx
+  result = eval(vm)
+  vm.popIP.val = result
 
-proc evalOperation(vm: VM) =
+proc evalOperation(vm: VM): VMValue =
   let f = vmcast[Native](vm.ip.getWord())
-  vm.push vm.rx
+  vm.push vm.opx
   vm.ip = vm.ip.nxt 
-  eval(vm)
-  vm.push vm.rx
-  f(vm)
+  vm.push eval(vm)
+  result = f(vm)
   dec vm.sp, 2
   
-proc evalFunc(vm: VM) =
+proc evalFunc(vm: VM): VMValue =
   let head = cast[HeapSlot](vm.ip.val.data)
   vm.ip = vm.ip.nxt
 
@@ -359,30 +359,28 @@ proc evalFunc(vm: VM) =
 
   for i in params:
     vm.push i.val
-    eval(vm)
-    i.val = vm.rx
+    i.val = eval(vm)
 
-  evalAll(vm, body)
+  result = evalAll(vm, body)
 
   for i in params:
     vm.pop i.val
 
 
-proc evalNative(vm: VM) =
+proc evalNative(vm: VM): VMValue =
   let head = cast[HeapSlot](vm.ip.val.data)
   vm.ip = vm.ip.nxt
   
   let params = vmcast[int](head.val)
   var i = params
   while i != 0:
-    eval(vm)
-    vm.push vm.rx 
+    vm.push eval(vm)
     dec i
 
-  (vmcast[Native](head.nxt.val))(vm)
+  result = (vmcast[Native](head.nxt.val))(vm)
   dec vm.sp, params
 
-proc eval*(vm: VM, code: BlockHead) {.inline.} = 
+proc eval*(vm: VM, code: BlockHead): VMValue {.inline.} = 
   evalAll(vm, code)
 
 #
